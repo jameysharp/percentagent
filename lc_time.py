@@ -1,0 +1,117 @@
+#!/usr/bin/env python
+
+import codecs
+from collections import defaultdict
+import os
+import re
+import subprocess
+import warnings
+
+keywords = [
+    "abday",
+    "day",
+    "abmon",
+    "mon",
+    "ab_alt_mon",
+    "alt_mon",
+    "am_pm",
+    "alt_digits",
+    "era",
+    "d_t_fmt",
+    "d_fmt",
+    "t_fmt",
+    "t_fmt_ampm",
+    "era_d_t_fmt",
+    "era_d_fmt",
+    "era_t_fmt",
+    "date_fmt",
+]
+
+shorthand = (
+    ('%c', lambda d: d.get("d_t_fmt", "")),
+    ('%r', lambda d: d.get("t_fmt_ampm", "")),
+    ('%x', lambda d: d.get("d_fmt", "")),
+    ('%X', lambda d: d.get("t_fmt", "")),
+    ('%D', lambda _: '%m/%d/%y'),
+    ('%F', lambda _: '%Y-%m-%d'),
+    ('%R', lambda _: '%H:%M'),
+    ('%T', lambda _: '%H:%M:%S'),
+)
+
+charset = re.compile(r'(?:\.[a-zA-Z0-9-]+)?(?:@euro)?')
+
+env = os.environ.copy()
+
+env["LC_ALL"] = "C"
+locale_a = subprocess.Popen(["locale", "-a"], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+
+by_keyword = defaultdict(lambda: defaultdict(set))
+
+for locale in locale_a.stdout:
+    locale = locale.strip().decode("US-ASCII")
+    if "_" not in locale:
+        continue
+
+    env["LC_ALL"] = locale
+    locale_proc = subprocess.Popen(["locale", "time-codeset"] + keywords, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    lines = iter(locale_proc.stdout)
+    codeset = next(lines).strip().decode("US-ASCII")
+
+    try:
+        decoder = codecs.getincrementaldecoder(codeset)()
+    except LookupError as e:
+        warnings.warn("{}: {}".format(locale, e))
+        continue
+
+    locale = charset.sub("", locale)
+
+    d = {}
+    for k, line in zip(keywords, lines):
+        v = decoder.decode(line.rstrip(b"\r\n"), True)
+        # Skip any values that contain only whitespace, including array values
+        # where each element contains only whitespace. Also, in some locales,
+        # the abbreviated months or alternate digits are a non-ASCII set of
+        # Unicode digits used in a place-number system. For parsing purposes,
+        # those can be handled by the normal digit-parsing routines, so also
+        # skip values that contain only Unicode digits.
+        if not all(c == ";" or c.isspace() or c.isdigit() for c in v):
+            d[k] = v
+
+    for k, v in d.items():
+        if k.endswith("mon"):
+            # Some month-name sets follow a regular pattern of the month-number
+            # plus some fixed prefix or suffix. We don't need to match those as
+            # string literals, because we can include them as sample date
+            # formats containing a "%m" conversion specifier instead.
+            # TODO: also do this for non-ASCII Unicode digits
+            fmts = set(
+                    word.strip().replace(str(month), "%m")
+                    for month, word in enumerate(v.split(";"), 1)
+                )
+            if len(fmts) == 1:
+                v = fmts.pop()
+                k = "formats"
+            # Normalize alternate month names to be matched like regular ones.
+            elif k == "alt_mon":
+                k = "mon"
+            elif k == "ab_alt_mon":
+                k = "abmon"
+        elif "_fmt" in k:
+            for orig, repl in shorthand:
+                v = v.replace(orig, repl(d))
+            d[k] = v
+            # Skip formats that are empty after expansion.
+            if not v:
+                continue
+            # Merge all types of format-string samples into one dictionary.
+            k = "formats"
+        by_keyword[k][v].add(locale)
+
+if __name__ == "__main__":
+    import json, sys
+    class SetEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, set):
+                return sorted(obj)
+            return json.JSONEncoder.default(self, obj)
+    json.dump(by_keyword, sys.stdout, cls=SetEncoder, indent=4, sort_keys=True)
