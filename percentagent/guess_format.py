@@ -7,9 +7,9 @@ import re
 from percentagent.extract_patterns import TimeLocaleSet
 
 class DateParser(object):
-    whitespace = re.compile(r'\s+')
-    numeric_formats = "CYmdHMS"
-    same_fields = {
+    _whitespace = re.compile(r'\s+')
+    _numeric_formats = "CYmdHMS"
+    _same_fields = {
         'b': 'm',
     }
 
@@ -29,7 +29,7 @@ class DateParser(object):
         return { fmt: set() }
 
     def parse(self, s):
-        segments = self.compiled.split(self.whitespace.sub(" ", s))
+        segments = self.compiled.split(self._whitespace.sub(" ", s))
         best_quality = None
         best_candidates = []
         for quality, pattern, locales in self._candidates(segments):
@@ -98,14 +98,14 @@ class DateParser(object):
                                     legal.update("m")
             else:
                 # TODO: find the locale and index of `raw` in alt_digits
-                legal = cls.numeric_formats
+                legal = cls._numeric_formats
 
             retain.intersection_update(legal)
             if not retain:
                 # If we don't have any guesses, guess everything.
                 retain = legal
         else:
-            retain.difference_update(cls.numeric_formats)
+            retain.difference_update(cls._numeric_formats)
 
         ret = { prefix + k: cls._intersect_locales(ret.get(k, ())) for k in retain }
         ret = sorted(ret.items(), key=lambda item: len(item[1] or ()), reverse=True)
@@ -119,16 +119,16 @@ class DateParser(object):
             return None
         return set.intersection(*locales)
 
-    min_date_formats = "Ymd"
-    all_date_formats = min_date_formats + "a"
-    min_time_formats = "HM"
-    all_time_formats = min_time_formats + "SpzZ"
-    bad_order = re.compile(r'(?<!d)m(?!d)|(?<!H)M|(?<!M)S')
+    _min_date_formats = "Ymd"
+    _all_date_formats = _min_date_formats + "a"
+    _min_time_formats = "HM"
+    _all_time_formats = _min_time_formats + "SpzZ"
+    _bad_order = re.compile(r'(?<!d)m(?!d)|(?<!H)M|(?<!M)S')
 
     @classmethod
     def _validate_conversions(cls, fmts):
         conversions = ''.join(
-                cls.same_fields.get(fmt[-1], fmt[-1])
+                cls._same_fields.get(fmt[-1], fmt[-1])
                 for fmt in fmts
                 if fmt[0] == '%'
             )
@@ -139,13 +139,13 @@ class DateParser(object):
         if len(fmt_set) != len(conversions):
             return False
 
-        if fmt_set.intersection(cls.all_date_formats) and not fmt_set.issuperset(cls.min_date_formats):
+        if fmt_set.intersection(cls._all_date_formats) and not fmt_set.issuperset(cls._min_date_formats):
             return False
 
-        if fmt_set.intersection(cls.all_time_formats) and not fmt_set.issuperset(cls.min_time_formats):
+        if fmt_set.intersection(cls._all_time_formats) and not fmt_set.issuperset(cls._min_time_formats):
             return False
 
-        if cls.bad_order.search(conversions):
+        if cls._bad_order.search(conversions):
             return False
 
         return True
