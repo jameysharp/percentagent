@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from collections import defaultdict
+import pytz
 import re
 
 equivalents = {
@@ -91,6 +92,16 @@ def extract(by_keyword):
         merged = set.union(*(patterns[pattern][fmt] for pattern in merges))
         for pattern in merges:
             patterns[pattern][fmt] = merged
+
+    for timezone in pytz.all_timezones:
+        tz = pytz.timezone(timezone)
+        if hasattr(tz, "_transition_info"):
+            shortnames = set(tzname for _, _, tzname in tz._transition_info)
+        else:
+            shortnames = [tz._tzname]
+        for tzname in shortnames:
+            if tzname[0] not in "+-":
+                patterns[tzname.casefold()]["Z"] = set()
 
     return patterns
 
