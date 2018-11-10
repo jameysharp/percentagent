@@ -31,10 +31,11 @@ class TimeLocaleSet(object):
 
     _text_keywords = {
         "abday": "a",
-        "day": "A",
+        "day": "a",
         "abmon": "b",
-        "mon": "B",
+        "mon": "b",
         "am_pm": "p",
+        "alt_digits": "O",
     }
 
     # Some patterns are common across so many locales that they are useless for
@@ -69,10 +70,6 @@ class TimeLocaleSet(object):
     def extract_patterns(self):
         patterns = defaultdict(lambda: defaultdict(set))
 
-        for v, locales in self.alt_digits.items():
-            for num in v.split(";"):
-                patterns[num]["O"].update(locales)
-
         # TODO: extract patterns from self.era
 
         for v, locales in self.formats.items():
@@ -98,7 +95,6 @@ class TimeLocaleSet(object):
                     patterns[suffix.casefold()][fmt + "#"].update(locales)
 
         for k, fmt in self._text_keywords.items():
-            fmt = fmt.lower()
             for v, locales in getattr(self, k).items():
                 for word in v.split(";"):
                     patterns[word.strip().casefold()][fmt].update(locales)
