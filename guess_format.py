@@ -43,6 +43,8 @@ class DateParser(object):
     def _candidates(self, segments):
         literals = segments[::2]
         raw = segments[1::2]
+        # FIXME: evaluating the full cartesian product is inefficient
+        # TODO: depth-first branch-and-bound and dynamic variable/value order
         for candidate in itertools.product(*self._groups(raw)):
             fmts, locales = zip(*candidate)
             locales = self._intersect_locales(locales)
@@ -147,10 +149,9 @@ class DateParser(object):
         return True
 
 if __name__ == "__main__":
-    import json
     with open("lc_time-glibc.json") as f:
-        locales = json.load(f)
-    parser = DateParser(extract_patterns.extract(locales))
+        locale_set = extract_patterns.TimeLocaleSet.from_json(f)
+    parser = DateParser(locale_set.extract_patterns())
     examples = (
         "5/5/2018, 4:45:18 AM",
         "2018-05-05T11:45:18.0000000Z",
