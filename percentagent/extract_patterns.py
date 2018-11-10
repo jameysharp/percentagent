@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 import json
+from pkg_resources import resource_stream
 import pytz
 import re
 
@@ -20,6 +21,12 @@ class TimeLocaleSet(object):
     @classmethod
     def from_json(cls, f):
         return cls(**json.load(f))
+
+    @classmethod
+    def default(cls, provider="glibc"):
+        path = "locales/{}.json".format(provider)
+        with resource_stream(__name__, path) as f:
+            return cls.from_json(f)
 
     _equivalents = {
         'e': 'd',
@@ -121,8 +128,7 @@ class TimeLocaleSet(object):
         return patterns
 
 if __name__ == "__main__":
-    import sys
-    locale_set = TimeLocaleSet.from_json(sys.stdin)
+    locale_set = TimeLocaleSet.default()
     patterns = locale_set.extract_patterns()
 
     for pattern, fmts in sorted(patterns.items()):

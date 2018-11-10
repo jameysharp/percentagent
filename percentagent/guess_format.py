@@ -4,7 +4,7 @@ from collections import defaultdict
 import itertools
 import re
 
-import extract_patterns
+from percentagent.extract_patterns import TimeLocaleSet
 
 class DateParser(object):
     whitespace = re.compile(r'\s+')
@@ -13,9 +13,11 @@ class DateParser(object):
         'b': 'm',
     }
 
-    def __init__(self, patterns):
-        self.patterns = patterns
-        self.compiled = re.compile(r'(\d+|[+-]\d{4}|' + '|'.join(map(re.escape, sorted(patterns, reverse=True))) + ')', re.I)
+    def __init__(self, locale_set=None):
+        if locale_set is None:
+            locale_set = TimeLocaleSet.default()
+        self.patterns = locale_set.extract_patterns()
+        self.compiled = re.compile(r'(\d+|[+-]\d{4}|' + '|'.join(map(re.escape, sorted(self.patterns, reverse=True))) + ')', re.I)
 
     @classmethod
     def _numeric_group(cls, value):
@@ -149,9 +151,7 @@ class DateParser(object):
         return True
 
 if __name__ == "__main__":
-    with open("lc_time-glibc.json") as f:
-        locale_set = extract_patterns.TimeLocaleSet.from_json(f)
-    parser = DateParser(locale_set.extract_patterns())
+    parser = DateParser()
     examples = (
         "5/5/2018, 4:45:18 AM",
         "2018-05-05T11:45:18.0000000Z",
