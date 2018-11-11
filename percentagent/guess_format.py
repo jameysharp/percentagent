@@ -11,8 +11,9 @@ class DateParser(object):
     Infer :manpage:`strftime(3)`-style format strings that could have produced
     given date and/or time strings.
 
-    Usually you'll want to pass :py:meth:`TimeLocaleSet.default` as your locale
-    set, but you can construct special-purpose sets if needed.
+    If you don't provide a locale set, then one will be constructed for you
+    with :py:meth:`TimeLocaleSet.default`. This is usually what you want, but
+    you can construct special-purpose sets if needed.
 
     This class precomputes some large data structures when constructed, so you
     should reuse the same instance for multiple parses, if possible.

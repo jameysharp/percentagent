@@ -128,13 +128,26 @@ class TimeLocaleSet(object):
         Return literal strings that indicate what role nearby parts of a date
         or time string play, and in which locales.
 
-        Here's a small example return value::
+        In this example we set up a small locale set with just one example date
+        format and one abbreviated weekday name which both share the same
+        pattern text:
 
-            {'日': {'a': {'cmn_TW', 'ja_JP'}, 'd#': {'ja_JP'}}}
+        >>> from pprint import pprint
+        >>> locale_set = TimeLocaleSet(
+        ...     formats={'%Y年 %m月 %d日': {'ja_JP'}},
+        ...     abday={'日': {'cmn_TW', 'ja_JP'}},
+        ... )
+        >>> patterns = locale_set.extract_patterns()
 
-        That example means that '日' could be the name of a day of the week
-        (``%a`` format) in either the cmn_TW or ja_JP locales, or it could
-        appear after the day-of-month (``%d`` format) in the ja_JP locale.
+        Now look up '日' among the extracted patterns:
+
+        >>> pprint(dict(patterns['日']))
+        {'a': {'cmn_TW', 'ja_JP'}, 'd#': {'ja_JP'}}
+
+        So pattern extraction has found that '日' could be the name of a day of
+        the week (``%a`` format) in either the ``cmn_TW`` or ``ja_JP`` locales,
+        or it could appear after the day-of-month (``%d`` format) in the
+        ``ja_JP`` locale.
 
         The outer dictionary's keys are literal strings that should be matched
         during format-string inference.
