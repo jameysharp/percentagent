@@ -1,2 +1,8 @@
+# this library is only tested with python 3
 python:
   version: 3
+
+# epub format breaks on manpage links for some reason; just skip it
+formats:
+  - htmlzip
+  - pdf
