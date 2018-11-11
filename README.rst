@@ -51,8 +51,8 @@ languages, without any configuration.
 
 I've extracted comprehensive data about how dates are formatted around
 the world from the GNU C library locale database. The script which does
-that is ``utils/lc_time.py`` if you want to run it on your own system
-with a POSIX-conforming implementation of :manpage:`locale(1)`. If your
+that is ``utils/lc_time`` if you want to run it on your own system with
+a POSIX-conforming implementation of :manpage:`locale(1)`. If your
 system's locale database includes locales or format-string examples that
 glibc doesn't, we can merge the extracted data to make this library
 support even more kinds of input.
