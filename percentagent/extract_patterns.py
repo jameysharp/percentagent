@@ -7,23 +7,64 @@ import pytz
 import re
 
 class TimeLocaleSet(object):
+    """
+    Structured information about how a set of locales express dates and times.
+
+    All instance variables are dictionaries which map a string to a set of
+    locales in which that string is used.
+
+    Except for :py:attr:`.formats`, the dictionary keys in all instance
+    variables are semicolon-separated (``;``) ordered lists. Their semantics
+    are documented in :manpage:`locale(5)`.
+    """
+
     def __init__(self, formats=None, abday=None, day=None, abmon=None, mon=None, am_pm=None, alt_digits=None, era=None):
         self.formats = formats or {}
+        """Sample format strings to extract prefix and suffix patterns from."""
+
         self.abday = abday or {}
+        """Abbreviated names of days of the week."""
+
         self.day = day or {}
+        """Full names of days of the week."""
+
         self.abmon = abmon or {}
+        """Abbreviated names of months."""
+
         self.mon = mon or {}
+        """Full names of months."""
+
         self.am_pm = am_pm or {}
+        """Strings indicating times before or after noon."""
+
         self.alt_digits = alt_digits or {}
+        """Numbers from writing systems which do not use Unicode digits."""
+
         self.era = era or {}
+        """Definitions of how years are counted and displayed."""
+
         # TODO: compact each field to maximize sharing
 
     @classmethod
     def from_json(cls, f):
+        """
+        Load a locale set from a JSON-formatted stream, such as one produced by
+        ``utils/lc_time.py``.
+
+        :return: the loaded locale set
+        """
+
         return cls(**json.load(f))
 
     @classmethod
     def default(cls, provider="glibc"):
+        """
+        Load a locale set that was distributed with this package. See
+        ``percentagent/locales/`` for the available sets.
+
+        :return: the loaded locale set
+        """
+
         path = "locales/{}.json".format(provider)
         with resource_stream(__name__, path) as f:
             return cls.from_json(f)
@@ -73,8 +114,49 @@ class TimeLocaleSet(object):
             ']*')
 
     fmt_token = re.compile(_ignore + r'%[-_0^#]?\d*[EO]?([a-zA-Z+%])' + _ignore)
+    """
+    A compiled regular expression to match :manpage:`strftime(3)`-style
+    conversion specifiers. This regex contains a single group which returns the
+    final conversion specifier character, skipping any flags, field widths, or
+    modifiers. The :py:meth:`~re.Pattern.findall` method will return a list of
+    just the conversion specifier characters; the :py:meth:`~re.Pattern.split`
+    method will return the same but alternating with non-conversion text.
+    """
 
     def extract_patterns(self):
+        """
+        Return literal strings that indicate what role nearby parts of a date
+        or time string play, and in which locales.
+
+        Here's a small example return value::
+
+            {'日': {'a': {'cmn_TW', 'ja_JP'}, 'd#': {'ja_JP'}}}
+
+        That example means that '日' could be the name of a day of the week
+        (``%a`` format) in either the cmn_TW or ja_JP locales, or it could
+        appear after the day-of-month (``%d`` format) in the ja_JP locale.
+
+        The outer dictionary's keys are literal strings that should be matched
+        during format-string inference.
+
+        Inner dictionaries' keys are a single conversion specifier character
+        (see :manpage:`strftime(3)`), optionally with a hash-mark (``#``)
+        either before or after it.
+
+        * ``#d`` indicates that the string can appear as a prefix of a ``%d``
+          conversion.
+        * ``a`` indicates that the string can be the result of a ``%a``
+          conversion.
+        * ``d#`` indicates that the string can appear as a suffix of a ``%d``
+          conversion.
+
+        The values in the inner dictionaries are sets of locales where this
+        string was found. An empty set indicates that the string may appear in
+        any locale.
+
+        :rtype: dict(str, dict(str, set(str)))
+        """
+
         patterns = defaultdict(lambda: defaultdict(set))
 
         # TODO: extract patterns from self.era

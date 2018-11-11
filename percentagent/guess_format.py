@@ -7,6 +7,21 @@ import re
 from percentagent.extract_patterns import TimeLocaleSet
 
 class DateParser(object):
+    """
+    Infer :manpage:`strftime(3)`-style format strings that could have produced
+    given date and/or time strings.
+
+    Usually you'll want to pass :py:meth:`TimeLocaleSet.default` as your locale
+    set, but you can construct special-purpose sets if needed.
+
+    This class precomputes some large data structures when constructed, so you
+    should reuse the same instance for multiple parses, if possible.
+
+    Instances of this class may safely be used from multiple threads.
+
+    :param TimeLocaleSet locale_set: locales to consider when parsing timestamps
+    """
+
     _whitespace = re.compile(r'\s+')
     _numeric_formats = "CYmdHMS"
     _same_fields = {
@@ -29,6 +44,38 @@ class DateParser(object):
         return { fmt: set() }
 
     def parse(self, s):
+        """
+        Infer format strings for a single timestamp.
+
+        For example:
+
+        >>> parser = DateParser(TimeLocaleSet())
+        >>> parser.parse("2018-05-05")
+        [('%Y-%m-%d', None), ('%Y-%d-%m', None)]
+
+        That output indicates that the input can be explained by either
+        year-month-day order or year-day-month order, and there are no hints
+        indicating which locale the date was formatted for.
+
+        On the other hand, "13" is too large to be a month number, so this
+        example is unambiguous:
+
+        >>> parser.parse("2018-05-13")
+        [('%Y-%m-%d', None)]
+
+        Using locale-specific strings can help avoid ambiguity too:
+
+        >>> parser = DateParser(TimeLocaleSet(
+        ...     abmon={"Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec": ["en_US"]},
+        ... ))
+        >>> parser.parse("2018May05")
+        [('%Y%b%d', {'en_US'})]
+
+        :param str s: text which contains a date and/or time
+        :return: possible format strings, and corresponding locales
+        :rtype: list(tuple(str, set(str) or None))
+        """
+
         segments = self.compiled.split(self._whitespace.sub(" ", s))
         best_quality = None
         best_candidates = []
