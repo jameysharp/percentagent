@@ -6,6 +6,17 @@ from pkg_resources import resource_stream
 import pytz
 import re
 
+class _InternTable(dict):
+    """
+    A callable which returns a value equal to its argument, but if it's called
+    twice with equivalent values, it always returns the object that was passed
+    to it first. As long as the objects are immutable, this saves memory
+    without changing the behavior of the program.
+    """
+
+    def __call__(self, v):
+        return self.setdefault(v, v)
+
 class TimeLocaleSet(object):
     """
     Structured information about how a set of locales express dates and times.
@@ -19,31 +30,47 @@ class TimeLocaleSet(object):
     """
 
     def __init__(self, formats=None, abday=None, day=None, abmon=None, mon=None, am_pm=None, alt_digits=None, era=None):
-        self.formats = formats or {}
+        locales = _InternTable()
+
+        self.formats = self._compact(locales, formats)
         """Sample format strings to extract prefix and suffix patterns from."""
 
-        self.abday = abday or {}
+        self.abday = self._compact(locales, abday)
         """Abbreviated names of days of the week."""
 
-        self.day = day or {}
+        self.day = self._compact(locales, day)
         """Full names of days of the week."""
 
-        self.abmon = abmon or {}
+        self.abmon = self._compact(locales, abmon)
         """Abbreviated names of months."""
 
-        self.mon = mon or {}
+        self.mon = self._compact(locales, mon)
         """Full names of months."""
 
-        self.am_pm = am_pm or {}
+        self.am_pm = self._compact(locales, am_pm)
         """Strings indicating times before or after noon."""
 
-        self.alt_digits = alt_digits or {}
+        self.alt_digits = self._compact(locales, alt_digits)
         """Numbers from writing systems which do not use Unicode digits."""
 
-        self.era = era or {}
+        self.era = self._compact(locales, era)
         """Definitions of how years are counted and displayed."""
 
-        # TODO: compact each field to maximize sharing
+    _empty_dictionary = {}
+
+    @classmethod
+    def _compact(cls, locales, d):
+        """
+        Ensure that identical locale names are only stored in memory once, and
+        similarly for groups of locales.
+        """
+
+        if not d:
+            return cls._empty_dictionary
+        return {
+            k: locales(tuple(sorted(map(locales, v))))
+            for k, v in d.items()
+        }
 
     @classmethod
     def from_json(cls, f):
