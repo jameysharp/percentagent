@@ -151,7 +151,6 @@ class TimeLocaleSet(object):
         format and one abbreviated weekday name which both share the same
         pattern text:
 
-        >>> from pprint import pprint
         >>> locale_set = TimeLocaleSet(
         ...     formats={'%Y年 %m月 %d日': {'ja_JP'}},
         ...     day={'日': {'cmn_TW', 'ja_JP'}},
@@ -160,8 +159,8 @@ class TimeLocaleSet(object):
 
         Now look up '日' among the extracted patterns:
 
-        >>> pprint(patterns['日'])
-        {'a': ('cmn_TW', 'ja_JP'), 'd#': ('ja_JP',)}
+        >>> sorted(patterns['日'])
+        [('a', ('cmn_TW', 'ja_JP')), ('d#', ('ja_JP',))]
 
         So pattern extraction has found that '日' could be the name of a day of
         the week (``%a`` format) in either the ``cmn_TW`` or ``ja_JP`` locales,
@@ -241,10 +240,10 @@ class TimeLocaleSet(object):
         localesets = _InternTable()
 
         return {
-            pattern: {
-                fmt: localesets(tuple(sorted(locales)))
+            pattern: tuple(
+                (fmt, localesets(tuple(sorted(locales))))
                 for fmt, locales in fmts.items()
-            }
+            )
             for pattern, fmts in patterns.items()
         }
 

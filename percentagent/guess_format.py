@@ -42,7 +42,7 @@ class DateParser(object):
             fmt = "z"
             value = value[1:]
         assert value.isdigit(), value
-        return { fmt: set() }
+        return ((fmt, ()),)
 
     def parse(self, s):
         """
@@ -108,9 +108,9 @@ class DateParser(object):
 
     def _groups(self, raw):
         groups = [ self.patterns.get(match.casefold()) or self._numeric_group(match) for match in raw ]
-        prefixes = [{}] + [ { k[1:]: v for k, v in g.items() if k[0] == '#' } for g in groups[:-1] ]
-        keywords = [ { k: v for k, v in g.items() if '#' not in k } for g in groups ]
-        suffixes = [ { k[:-1]: v for k, v in g.items() if k[-1] == '#' } for g in groups[1:] ] + [{}]
+        prefixes = [{}] + [ { k[1:]: v for k, v in g if k[0] == '#' } for g in groups[:-1] ]
+        keywords = [ { k: v for k, v in g if '#' not in k } for g in groups ]
+        suffixes = [ { k[:-1]: v for k, v in g if k[-1] == '#' } for g in groups[1:] ] + [{}]
         return [ self._unify(*stuff) for stuff in zip(raw, prefixes, keywords, suffixes) ]
 
     @classmethod
