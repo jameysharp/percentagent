@@ -114,6 +114,7 @@ class TimeLocaleSet(object):
         '/': _date_patterns,
         '-': _date_patterns,
         'utc': ("#z",), # "UTC+hhmm"
+        't': ("d#", "#H"), # ISO 8601: ...%dT%H...
     }
 
     _merge_patterns = (
