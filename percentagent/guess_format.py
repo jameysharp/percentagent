@@ -24,7 +24,7 @@ class DateParser(object):
     """
 
     _whitespace = re.compile(r'\s+')
-    _numeric_formats = "CYmdHMS"
+    _numeric_formats = "CymdHMS"
     _same_fields = {
         'b': 'm',
     }
@@ -33,7 +33,7 @@ class DateParser(object):
         if locale_set is None:
             locale_set = TimeLocaleSet.default()
         self.patterns = locale_set.extract_patterns()
-        self.compiled = re.compile(r'(\d+|[+-]\d{4}|' + '|'.join(map(re.escape, sorted(self.patterns, reverse=True))) + ')', re.I)
+        self.compiled = re.compile(r'(\d{1,2}|[+-]\d{4}|' + '|'.join(map(re.escape, sorted(self.patterns, reverse=True))) + ')', re.I)
 
     @classmethod
     def _numeric_group(cls, value):
@@ -63,6 +63,16 @@ class DateParser(object):
 
         >>> parser.parse("2018-05-13")
         [('%Y-%m-%d', None)]
+
+        Separators are not required between conversions, but they can help with
+        ambiguity:
+
+        >>> sorted(fmt for fmt, locales in parser.parse("210456"))
+        ['%H%M%S', '%d%m%y']
+        >>> parser.parse("21-04-56")
+        [('%d-%m-%y', None)]
+        >>> parser.parse("21:04:56")
+        [('%H:%M:%S', None)]
 
         Using locale-specific strings can help avoid ambiguity too:
 
@@ -103,7 +113,7 @@ class DateParser(object):
             if not self._validate_conversions(fmts):
                 continue
             quality = sum(len(fmt) for fmt in fmts if fmt[0] != "%")
-            pattern = ''.join(lit + fmt for lit, fmt in zip(literals, fmts + ('',)))
+            pattern = ''.join(lit + fmt for lit, fmt in zip(literals, fmts + ('',))).replace("%C%y", "%Y")
             yield quality, pattern, locales
 
     def _groups(self, raw):
@@ -131,19 +141,17 @@ class DateParser(object):
             legal = set()
             if "0" in ret:
                 value = int(raw)
-                legal.update("Y")
-                if value < 100:
-                    legal.update("C")
-                    if value <= 60:
-                        legal.update("S")
-                        if value <= 59:
-                            legal.update("M")
-                            if value <= 23:
-                                legal.update("H")
-                            if 1 <= value <= 31:
-                                legal.update("d")
-                                if value <= 12:
-                                    legal.update("m")
+                legal.update("Cy")
+                if value <= 60:
+                    legal.update("S")
+                    if value <= 59:
+                        legal.update("M")
+                        if value <= 23:
+                            legal.update("H")
+                        if 1 <= value <= 31:
+                            legal.update("d")
+                            if value <= 12:
+                                legal.update("m")
             else:
                 # TODO: find the locale and index of `raw` in alt_digits
                 legal = cls._numeric_formats
@@ -167,11 +175,11 @@ class DateParser(object):
             return None
         return set.intersection(*locales)
 
-    _min_date_formats = "Ymd"
-    _all_date_formats = _min_date_formats + "a"
+    _min_date_formats = "ymd"
+    _all_date_formats = _min_date_formats + "Ca"
     _min_time_formats = "HM"
     _all_time_formats = _min_time_formats + "SpzZ"
-    _bad_order = re.compile(r'(?<!d)m(?!d)|(?<!H)M|(?<!M)S')
+    _bad_order = re.compile(r'C(?!y)|(?<!d)m(?!d)|(?<!H)M|(?<!M)S')
 
     @classmethod
     def _validate_conversions(cls, fmts):
@@ -202,7 +210,7 @@ if __name__ == "__main__":
     parser = DateParser()
     examples = (
         "5/5/2018, 4:45:18 AM",
-        "2018-05-05T11:45:18.0000000Z",
+        "20180505T114518Z",
         "Fri Nov  9 17:49:24 PST 2018",
         "Fra Nov  9 17:57:39 PST 2018",
         "Lw5 Nov  9 17:57:39 PST 2018",

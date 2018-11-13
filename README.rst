@@ -17,8 +17,7 @@ features, because this library also has some disadvantages (although
 these may get fixed over time):
 
 - No test suite yet, while ``dateutil`` is well-tested
-- Currently requires whitespace or text between numeric conversion
-  specifiers (e.g. ``%Y%m%d`` won't work, though ``%Y%b%d`` will)
+- Slow performance (huge optimizations are possible but not implemented)
 
 Format strings
 --------------

@@ -95,7 +95,7 @@ class TimeLocaleSet(object):
         'I': 'H',
         'k': 'H',
         'l': 'H',
-        'y': 'Y',
+        'Y': 'y',
     }
 
     _text_keywords = {
@@ -108,7 +108,7 @@ class TimeLocaleSet(object):
     # Some patterns are common across so many locales that they are useless for
     # guessing which locale the input came from, and should just be allowed for all
     # locales.
-    _date_patterns = [ order.format(fmt) for order in ("{}#", "#{}") for fmt in "Ymd" ]
+    _date_patterns = [ order.format(fmt) for order in ("{}#", "#{}") for fmt in "ymd" ] + ["#C"]
     _global_patterns = {
         ':': ("H#", "M#", "#M", "#S"),
         '/': _date_patterns,
