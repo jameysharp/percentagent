@@ -78,6 +78,10 @@ for locale in locale_a.stdout:
             d[k] = v
 
     for k, v in d.items():
+        # Match abbreviations just like their full counterparts.
+        if k.startswith("ab"):
+            k = k[2:]
+
         if k.endswith("mon"):
             # Some month-name sets follow a regular pattern of the month-number
             # plus some fixed prefix or suffix. We don't need to match those as
@@ -92,10 +96,8 @@ for locale in locale_a.stdout:
                 v = fmts.pop()
                 k = "formats"
             # Normalize alternate month names to be matched like regular ones.
-            elif k == "alt_mon":
+            elif k.endswith("alt_mon"):
                 k = "mon"
-            elif k == "ab_alt_mon":
-                k = "abmon"
         elif "_fmt" in k:
             for orig, repl in shorthand:
                 v = v.replace(orig, repl(d))

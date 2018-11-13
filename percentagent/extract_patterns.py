@@ -29,23 +29,17 @@ class TimeLocaleSet(object):
     are documented in :manpage:`locale(5)`.
     """
 
-    def __init__(self, formats=None, abday=None, day=None, abmon=None, mon=None, am_pm=None, alt_digits=None, era=None):
+    def __init__(self, formats=None, day=None, mon=None, am_pm=None, alt_digits=None, era=None):
         locales = _InternTable()
 
         self.formats = self._compact(locales, formats)
         """Sample format strings to extract prefix and suffix patterns from."""
 
-        self.abday = self._compact(locales, abday)
-        """Abbreviated names of days of the week."""
-
         self.day = self._compact(locales, day)
-        """Full names of days of the week."""
-
-        self.abmon = self._compact(locales, abmon)
-        """Abbreviated names of months."""
+        """Names of days of the week."""
 
         self.mon = self._compact(locales, mon)
-        """Full names of months."""
+        """Names of months."""
 
         self.am_pm = self._compact(locales, am_pm)
         """Strings indicating times before or after noon."""
@@ -105,9 +99,7 @@ class TimeLocaleSet(object):
     }
 
     _text_keywords = {
-        "abday": "a",
         "day": "a",
-        "abmon": "b",
         "mon": "b",
         "am_pm": "p",
         "alt_digits": "O",
@@ -162,7 +154,7 @@ class TimeLocaleSet(object):
         >>> from pprint import pprint
         >>> locale_set = TimeLocaleSet(
         ...     formats={'%Y年 %m月 %d日': {'ja_JP'}},
-        ...     abday={'日': {'cmn_TW', 'ja_JP'}},
+        ...     day={'日': {'cmn_TW', 'ja_JP'}},
         ... )
         >>> patterns = locale_set.extract_patterns()
 

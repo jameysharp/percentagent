@@ -67,7 +67,7 @@ class DateParser(object):
         Using locale-specific strings can help avoid ambiguity too:
 
         >>> parser = DateParser(TimeLocaleSet(
-        ...     abmon={"Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec": ["en_US"]},
+        ...     mon={"Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec": ["en_US"]},
         ... ))
         >>> parser.parse("2018May05")
         [('%Y%b%d', {'en_US'})]
