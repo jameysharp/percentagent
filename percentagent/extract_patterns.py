@@ -168,8 +168,8 @@ class TimeLocaleSet(object):
 
         Now look up '日' among the extracted patterns:
 
-        >>> pprint(dict(patterns['日']))
-        {'a': {'cmn_TW', 'ja_JP'}, 'd#': {'ja_JP'}}
+        >>> pprint(patterns['日'])
+        {'a': ('cmn_TW', 'ja_JP'), 'd#': ('ja_JP',)}
 
         So pattern extraction has found that '日' could be the name of a day of
         the week (``%a`` format) in either the ``cmn_TW`` or ``ja_JP`` locales,
@@ -194,7 +194,7 @@ class TimeLocaleSet(object):
         string was found. An empty set indicates that the string may appear in
         any locale.
 
-        :rtype: dict(str, dict(str, set(str)))
+        :rtype: dict(str, dict(str, tuple(str)))
         """
 
         patterns = defaultdict(lambda: defaultdict(set))
@@ -244,10 +244,17 @@ class TimeLocaleSet(object):
                 shortnames = [tz._tzname]
             for tzname in shortnames:
                 if tzname[0] not in "+-":
-                    patterns[tzname.casefold()]["Z"] = set()
+                    patterns[tzname.casefold()]["Z"] = frozenset()
 
-        # TODO: compact `patterns` to maximize sharing
-        return patterns
+        localesets = _InternTable()
+
+        return {
+            pattern: {
+                fmt: localesets(tuple(sorted(locales)))
+                for fmt, locales in fmts.items()
+            }
+            for pattern, fmts in patterns.items()
+        }
 
 if __name__ == "__main__":
     locale_set = TimeLocaleSet.default()
