@@ -62,6 +62,13 @@ date according to the returned format string, but it also gives you an
 additional data point if you're comparing different date strings to
 determine if they were generated using the same format.
 
+Command-line usage
+==================
+
+A simple interactive interface is available::
+
+    python -m percentagent
+
 License
 =======
 
