@@ -1,6 +1,12 @@
 Guess strftime format strings
 =============================
 
+.. image:: https://readthedocs.org/projects/percentagent/badge/?version=latest
+    :target: https://percentagent.readthedocs.io/en/latest/?badge=latest
+    :alt: Documentation Status
+
+https://github.com/jameysharp/percentagent
+
 This resembles and is inspired by the ``parser`` module of `dateutil`_,
 in that it attempts to parse structured dates and times out of arbitrary
 strings. However this implementation has several advantages:
