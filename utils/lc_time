@@ -77,6 +77,10 @@ for locale in locale_a.stdout:
         if not all(c == ";" or c.isspace() or c.isdigit() for c in v):
             d[k] = v
 
+    alt_digits = d.get("alt_digits", ())
+    if alt_digits:
+        alt_digits = alt_digits.split(";")[1:]
+
     for k, v in d.items():
         # Match abbreviations just like their full counterparts.
         if k.startswith("ab"):
@@ -87,13 +91,23 @@ for locale in locale_a.stdout:
             # plus some fixed prefix or suffix. We don't need to match those as
             # string literals, because we can include them as sample date
             # formats containing a "%m" conversion specifier instead.
-            # TODO: also do this for non-ASCII Unicode digits
-            fmts = set(
-                    word.strip().replace(str(month), "%m")
+            numfmts = set(
+                    re.sub(r'\d+', (lambda m: "%m" if int(m.group()) == month else m.group()), word.strip())
                     for month, word in enumerate(v.split(";"), 1)
                 )
-            if len(fmts) == 1:
-                v = fmts.pop()
+            altfmts = set(
+                    word.strip().replace(month, "%m")
+                    for month, word in zip(alt_digits, v.split(";"))
+                )
+            if len(numfmts) == 1:
+                v = numfmts.pop()
+                if v == "%m":
+                    continue
+                k = "formats"
+            elif len(altfmts) == 1:
+                v = altfmts.pop()
+                if v == "%m":
+                    continue
                 k = "formats"
             # Normalize alternate month names to be matched like regular ones.
             elif k.endswith("alt_mon"):
