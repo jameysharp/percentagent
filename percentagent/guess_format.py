@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from collections import defaultdict
+from collections import Counter
 import itertools
 import re
 
@@ -35,18 +35,6 @@ class DateParser(object):
         self.locale_set = locale_set
         strings = set(itertools.chain(locale_set.prefixes, locale_set.keywords, locale_set.suffixes))
         self.compiled = re.compile(r'(\d{1,2}|[+-]\d{4}|' + '|'.join(map(re.escape, sorted(strings, reverse=True))) + ')', re.I)
-
-    def _lookup_keyword(self, keyword):
-        found = self.locale_set.keywords.get(keyword)
-        if found:
-            return found
-        fmt = "0"
-        if keyword[0] in "+-":
-            fmt = "z"
-            keyword = keyword[1:]
-        if keyword.isdigit():
-            return ((fmt, ()),)
-        return ()
 
     def parse(self, s):
         """
@@ -84,7 +72,7 @@ class DateParser(object):
         ...     mon={"Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec": ["en_US"]},
         ... ))
         >>> parser.parse("2018May05")
-        [('%Y%b%d', {'en_US'})]
+        [('%Y%b%d', frozenset({'en_US'}))]
 
         :param str s: text which contains a date and/or time
         :return: possible format strings, and corresponding locales
@@ -95,7 +83,7 @@ class DateParser(object):
         best_quality = None
         best_candidates = []
         for quality, pattern, locales in self._candidates(segments):
-            if best_quality is not None and quality > best_quality:
+            if best_quality is not None and quality < best_quality:
                 # We've seen better, so skip this one.
                 continue
             if quality != best_quality:
@@ -107,77 +95,111 @@ class DateParser(object):
     def _candidates(self, segments):
         literals = segments[::2]
         raw = segments[1::2]
+
+        case = list(map(str.casefold, raw))
+        prefixes = [{}] + [dict(self.locale_set.prefixes.get(match, ())) for match in case[:-1]]
+        suffixes = [dict(self.locale_set.suffixes.get(match, ())) for match in case[1:]] + [{}]
+        keywords = [self._lookup_keyword(match) + ((match, None),) for match in raw]
+        groups = []
+        for keyword, prefix, suffix in zip(keywords, prefixes, suffixes):
+            if "y" in prefix:
+                prefix["C"] = tuple(set(prefix["y"] + prefix.get("C", ())))
+            groups.append([
+                (
+                    fmt,
+                    locales,
+                    prefix.get(fmt[-1]) if fmt[0] == "%" else None,
+                    suffix.get(fmt[-1]) if fmt[0] == "%" else None,
+                )
+                for fmt, locales in keyword
+            ])
+
         # FIXME: evaluating the full cartesian product is inefficient
         # TODO: depth-first branch-and-bound and dynamic variable/value order
-        for candidate in itertools.product(*self._groups(raw)):
-            fmts, locales = zip(*candidate)
-            locales = self._intersect_locales(locales)
-            if locales == set():
+        for candidate in itertools.product(*groups):
+            try:
+                fmts, locales, quality = self._satisfied_hints(candidate)
+            except ValueError as e:
                 continue
             if not self._validate_conversions(fmts):
                 continue
-            quality = sum(len(fmt) for fmt in fmts if fmt[0] != "%")
             pattern = ''.join(lit + fmt for lit, fmt in zip(literals, fmts + ('',))).replace("%C%y", "%Y")
             yield quality, pattern, locales
 
-    def _groups(self, raw):
-        case = list(map(str.casefold, raw))
-        prefixes = [()] + [ self.locale_set.prefixes.get(match, ()) for match in case[:-1] ]
-        suffixes = [ self.locale_set.suffixes.get(match, ()) for match in case[1:] ] + [()]
-        keywords = map(self._lookup_keyword, case)
-        return [ self._unify(*stuff) for stuff in zip(raw, prefixes, keywords, suffixes) ]
+    def _lookup_keyword(self, raw):
+        keyword = raw.casefold()
+        found = self.locale_set.keywords.get(keyword)
+        if found:
+            ret = { "%" + fmt: frozenset(locales) for fmt, locales in found }
+            if "%O" in ret:
+                locales = ret.pop("%O")
+                # TODO: find the index of `keyword` in alt_digits
+                ret.update(("%O" + fmt, locales) for fmt in self._numeric_formats)
+            return tuple(ret.items())
+        if keyword[0] in "+-":
+            if keyword[1:].isdigit():
+                return (("%z", None),)
+        elif keyword.isdigit():
+            value = int(keyword)
+            legal = set("Cy")
+            if value <= 60:
+                legal.update("S")
+                if value <= 59:
+                    legal.update("M")
+                    if value <= 23:
+                        legal.update("H")
+                    if 1 <= value <= 31:
+                        legal.update("d")
+                        if value <= 12:
+                            legal.update("m")
+            return tuple(("%" + fmt, None) for fmt in legal)
+        return ()
 
-    @classmethod
-    def _unify(cls, raw, *group):
-        ret = defaultdict(list)
-        for g in group:
-            for fmt, locales in g:
-                ret[fmt].append(set(locales))
+    def _satisfied_hints(self, candidate):
+        fmts = []
+        required_locales = None
+        satisfied = Counter()
+        globally_satisfied = 0
+        was_conversion = True
+        unless_conversion = None
+        for fmt, locales, prefix, suffix in candidate:
+            fmts.append(fmt)
+            if locales:
+                if required_locales:
+                    if locales.isdisjoint(required_locales):
+                        raise ValueError("expected {} but {} is disjoint".format(','.join(required_locales), ','.join(locales)))
+                    locales = locales.intersection(required_locales)
+                required_locales = locales
 
-        prefix = "%"
-        if "O" in ret:
-            prefix = "%O"
+            is_conversion = fmt[0] == "%"
+            globally_satisfied += is_conversion
 
-        retain = set(ret.keys())
-        # We can match numeric formats if and only if this field turned out to
-        # be numeric.
-        if retain.intersection("O0"):
-            legal = set()
-            if "0" in ret:
-                value = int(raw)
-                legal.update("Cy")
-                if value <= 60:
-                    legal.update("S")
-                    if value <= 59:
-                        legal.update("M")
-                        if value <= 23:
-                            legal.update("H")
-                        if 1 <= value <= 31:
-                            legal.update("d")
-                            if value <= 12:
-                                legal.update("m")
-            else:
-                # TODO: find the locale and index of `raw` in alt_digits
-                legal = cls._numeric_formats
+            local_satisfied = (
+                None if is_conversion else unless_conversion,
+                None if was_conversion else prefix,
+            )
+            for hint in local_satisfied:
+                if hint:
+                    satisfied.update(hint)
+                elif hint is not None:
+                    globally_satisfied += 1
 
-            retain.intersection_update(legal)
-            if not retain:
-                # If we don't have any guesses, guess everything.
-                retain = legal
+            was_conversion = is_conversion
+            unless_conversion = suffix
+
+        satisfied_locales = required_locales
+        locally_satisfied = 0
+        if required_locales:
+            satisfied = [ (k, v) for k, v in satisfied.items() if k in required_locales ]
         else:
-            retain.difference_update(cls._numeric_formats)
-
-        ret = { prefix + k: cls._intersect_locales(ret.get(k, ())) for k in retain }
-        ret = sorted(ret.items(), key=lambda item: len(item[1] or ()), reverse=True)
-        ret.append((raw, None))
-        return ret
-
-    @staticmethod
-    def _intersect_locales(locales):
-        locales = list(filter(None, locales))
-        if not locales:
-            return None
-        return set.intersection(*locales)
+            satisfied = list(satisfied.items())
+        if satisfied:
+            locally_satisfied = max(v for k, v in satisfied)
+            satisfied_locales = frozenset(
+                locale for locale, count in satisfied
+                if count == locally_satisfied
+            )
+        return tuple(fmts), satisfied_locales, (globally_satisfied + locally_satisfied)
 
     _min_date_formats = "ymd"
     _all_date_formats = _min_date_formats + "Ca"
