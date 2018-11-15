@@ -32,17 +32,21 @@ class DateParser(object):
     def __init__(self, locale_set=None):
         if locale_set is None:
             locale_set = TimeLocaleSet.default()
-        self.patterns = locale_set.extract_patterns()
-        self.compiled = re.compile(r'(\d{1,2}|[+-]\d{4}|' + '|'.join(map(re.escape, sorted(self.patterns, reverse=True))) + ')', re.I)
+        self.locale_set = locale_set
+        strings = set(itertools.chain(locale_set.prefixes, locale_set.keywords, locale_set.suffixes))
+        self.compiled = re.compile(r'(\d{1,2}|[+-]\d{4}|' + '|'.join(map(re.escape, sorted(strings, reverse=True))) + ')', re.I)
 
-    @classmethod
-    def _numeric_group(cls, value):
+    def _lookup_keyword(self, keyword):
+        found = self.locale_set.keywords.get(keyword)
+        if found:
+            return found
         fmt = "0"
-        if value[0] in "+-":
+        if keyword[0] in "+-":
             fmt = "z"
-            value = value[1:]
-        assert value.isdigit(), value
-        return ((fmt, ()),)
+            keyword = keyword[1:]
+        if keyword.isdigit():
+            return ((fmt, ()),)
+        return ()
 
     def parse(self, s):
         """
@@ -117,17 +121,17 @@ class DateParser(object):
             yield quality, pattern, locales
 
     def _groups(self, raw):
-        groups = [ self.patterns.get(match.casefold()) or self._numeric_group(match) for match in raw ]
-        prefixes = [{}] + [ { k[1:]: v for k, v in g if k[0] == '#' } for g in groups[:-1] ]
-        keywords = [ { k: v for k, v in g if '#' not in k } for g in groups ]
-        suffixes = [ { k[:-1]: v for k, v in g if k[-1] == '#' } for g in groups[1:] ] + [{}]
+        case = list(map(str.casefold, raw))
+        prefixes = [()] + [ self.locale_set.prefixes.get(match, ()) for match in case[:-1] ]
+        suffixes = [ self.locale_set.suffixes.get(match, ()) for match in case[1:] ] + [()]
+        keywords = map(self._lookup_keyword, case)
         return [ self._unify(*stuff) for stuff in zip(raw, prefixes, keywords, suffixes) ]
 
     @classmethod
     def _unify(cls, raw, *group):
         ret = defaultdict(list)
         for g in group:
-            for fmt, locales in g.items():
+            for fmt, locales in g:
                 ret[fmt].append(set(locales))
 
         prefix = "%"
@@ -211,6 +215,7 @@ if __name__ == "__main__":
     examples = (
         "5/5/2018, 4:45:18 AM",
         "20180505T114518Z",
+        "T nov   13 12:27:03 PST 2018",
         "Fri Nov  9 17:49:24 PST 2018",
         "Fra Nov  9 17:57:39 PST 2018",
         "Lw5 Nov  9 17:57:39 PST 2018",

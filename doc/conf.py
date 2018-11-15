@@ -165,6 +165,7 @@ texinfo_documents = [
 
 # -- Options for autodoc extension -------------------------------------------
 
+autoclass_content = 'both'
 autodoc_member_order = 'bysource'
 
 # -- Options for intersphinx extension ---------------------------------------

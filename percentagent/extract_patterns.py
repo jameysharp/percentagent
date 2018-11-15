@@ -20,57 +20,13 @@ class _InternTable(dict):
 class TimeLocaleSet(object):
     """
     Structured information about how a set of locales express dates and times.
-
-    All instance variables are dictionaries which map a string to a set of
-    locales in which that string is used.
-
-    Except for :py:attr:`.formats`, the dictionary keys in all instance
-    variables are semicolon-separated (``;``) ordered lists. Their semantics
-    are documented in :manpage:`locale(5)`.
     """
-
-    def __init__(self, formats=None, day=None, mon=None, am_pm=None, alt_digits=None, era=None):
-        locales = _InternTable()
-
-        self.formats = self._compact(locales, formats)
-        """Sample format strings to extract prefix and suffix patterns from."""
-
-        self.day = self._compact(locales, day)
-        """Names of days of the week."""
-
-        self.mon = self._compact(locales, mon)
-        """Names of months."""
-
-        self.am_pm = self._compact(locales, am_pm)
-        """Strings indicating times before or after noon."""
-
-        self.alt_digits = self._compact(locales, alt_digits)
-        """Numbers from writing systems which do not use Unicode digits."""
-
-        self.era = self._compact(locales, era)
-        """Definitions of how years are counted and displayed."""
-
-    _empty_dictionary = {}
-
-    @classmethod
-    def _compact(cls, locales, d):
-        """
-        Ensure that identical locale names are only stored in memory once, and
-        similarly for groups of locales.
-        """
-
-        if not d:
-            return cls._empty_dictionary
-        return {
-            k: locales(tuple(sorted(map(locales, v))))
-            for k, v in d.items()
-        }
 
     @classmethod
     def from_json(cls, f):
         """
         Load a locale set from a JSON-formatted stream, such as one produced by
-        ``utils/lc_time.py``.
+        ``utils/lc_time``.
 
         :return: the loaded locale set
         """
@@ -90,6 +46,12 @@ class TimeLocaleSet(object):
         with resource_stream(__name__, path) as f:
             return cls.from_json(f)
 
+    @classmethod
+    def _localized_conversion(cls, uniq, keywords, fmt, d):
+        for v, locales in d.items():
+            for word in v.split(";"):
+                keywords[word.strip().casefold()][fmt].update(map(uniq, locales))
+
     _equivalents = {
         'e': 'd',
         'I': 'H',
@@ -98,24 +60,22 @@ class TimeLocaleSet(object):
         'Y': 'y',
     }
 
-    _text_keywords = {
-        "day": "a",
-        "mon": "b",
-        "am_pm": "p",
-        "alt_digits": "O",
-    }
-
     # Some patterns are common across so many locales that they are useless for
     # guessing which locale the input came from, and should just be allowed for all
     # locales.
-    _date_patterns = [ order.format(fmt) for order in ("{}#", "#{}") for fmt in "ymd" ] + ["#C"]
-    _global_patterns = {
-        ':': ("H#", "M#", "#M", "#S"),
-        '/': _date_patterns,
-        '-': _date_patterns,
-        'utc': ("#z",), # "UTC+hhmm"
-        't': ("d#", "#H"), # ISO 8601: ...%dT%H...
-    }
+    _global_prefixes = (
+        (":", "MS"),
+        ("/", "Cymd"),
+        ("-", "Cymd"),
+        ("utc", "z"), # "UTC+hhmm"
+        ("t", "H"), # ISO 8601: ...%dT%H...
+    )
+    _global_suffixes = (
+        (":", "HM"),
+        ("/", "ymd"),
+        ("-", "ymd"),
+        ("t", "d"), # ISO 8601: ...%dT%H...
+    )
 
     _merge_patterns = (
         ("p", ("am", "a.m.")),
@@ -133,7 +93,7 @@ class TimeLocaleSet(object):
             ",\xb7\u055d\u060c\u07f8\u1363\u1802\u1808\u2e41\u2e4c\u3001\ua4fe\ua60d\ua6f5\uff0c"
             ']*')
 
-    fmt_token = re.compile(_ignore + r'%[-_0^#]?\d*[EO]?([a-zA-Z+%])' + _ignore)
+    _fmt_token = re.compile(_ignore + r'%[-_0^#]?\d*[EO]?([a-zA-Z+%])' + _ignore)
     """
     A compiled regular expression to match :manpage:`strftime(3)`-style
     conversion specifiers. This regex contains a single group which returns the
@@ -143,58 +103,64 @@ class TimeLocaleSet(object):
     method will return the same but alternating with non-conversion text.
     """
 
-    def extract_patterns(self):
+    def __init__(self, formats=None, day=None, mon=None, am_pm=None, alt_digits=None, era=None):
         """
-        Return literal strings that indicate what role nearby parts of a date
-        or time string play, and in which locales.
+        All parameters are dictionaries which map a string to a set of locales
+        in which that string is used.
 
-        In this example we set up a small locale set with just one example date
-        format and one abbreviated weekday name which both share the same
-        pattern text:
+        Except for :py:obj:`formats`, the dictionary keys are
+        semicolon-separated (``;``) ordered lists. Their semantics are
+        documented in :manpage:`locale(5)`.
 
-        >>> locale_set = TimeLocaleSet(
-        ...     formats={'%Y年 %m月 %d日': {'ja_JP'}},
-        ...     day={'日': {'cmn_TW', 'ja_JP'}},
-        ... )
-        >>> patterns = locale_set.extract_patterns()
-
-        Now look up '日' among the extracted patterns:
-
-        >>> sorted(patterns['日'])
-        [('a', ('cmn_TW', 'ja_JP')), ('d#', ('ja_JP',))]
-
-        So pattern extraction has found that '日' could be the name of a day of
-        the week (``%a`` format) in either the ``cmn_TW`` or ``ja_JP`` locales,
-        or it could appear after the day-of-month (``%d`` format) in the
-        ``ja_JP`` locale.
-
-        The outer dictionary's keys are literal strings that should be matched
-        during format-string inference.
-
-        Inner dictionaries' keys are a single conversion specifier character
-        (see :manpage:`strftime(3)`), optionally with a hash-mark (``#``)
-        either before or after it.
-
-        * ``#d`` indicates that the string can appear as a prefix of a ``%d``
-          conversion.
-        * ``a`` indicates that the string can be the result of a ``%a``
-          conversion.
-        * ``d#`` indicates that the string can appear as a suffix of a ``%d``
-          conversion.
-
-        The values in the inner dictionaries are sets of locales where this
-        string was found. An empty set indicates that the string may appear in
-        any locale.
-
-        :rtype: dict(str, dict(str, tuple(str)))
+        :param formats: Sample :manpage:`strftime(3)` format strings to extract
+            prefix and suffix patterns from.
+        :param day: Names of days of the week.
+        :param mon: Names of months.
+        :param am_pm: Strings indicating times before or after noon.
+        :param alt_digits: Numbers from writing systems which do not use
+            Unicode digits.
+        :param era: Definitions of how years are counted and displayed.
         """
 
-        patterns = defaultdict(lambda: defaultdict(set))
+        uniqlocales = _InternTable()
+        uniqlocalesets = _InternTable()
 
-        # TODO: extract patterns from self.era
+        keywords = defaultdict(lambda: defaultdict(set))
+        self._localized_conversion(uniqlocales, keywords, "a", day or {})
+        self._localized_conversion(uniqlocales, keywords, "b", mon or {})
+        self._localized_conversion(uniqlocales, keywords, "p", am_pm or {})
+        self._localized_conversion(uniqlocales, keywords, "O", alt_digits or {})
 
-        for v, locales in self.formats.items():
-            tokens = self.fmt_token.split(v)
+        for fmt, merges in self._merge_patterns:
+            merged = set.union(*(keywords[pattern][fmt] for pattern in merges))
+            for pattern in merges:
+                keywords[pattern][fmt] = merged
+
+        for timezone in pytz.all_timezones:
+            tz = pytz.timezone(timezone)
+            if hasattr(tz, "_transition_info"):
+                shortnames = set(tzname for _, _, tzname in tz._transition_info)
+            else:
+                shortnames = [tz._tzname]
+            for tzname in shortnames:
+                if tzname[0] not in "+-":
+                    keywords[tzname.casefold()]["Z"] = frozenset()
+
+        self._keywords = {
+            pattern: tuple(
+                (fmt, uniqlocalesets(tuple(sorted(locales))))
+                for fmt, locales in fmts.items()
+            )
+            for pattern, fmts in keywords.items()
+        }
+
+        prefixes = defaultdict(lambda: defaultdict(set))
+        suffixes = defaultdict(lambda: defaultdict(set))
+
+        # TODO: extract patterns from era
+
+        for v, locales in (formats or {}).items():
+            tokens = self._fmt_token.split(v)
             pairs = zip(tokens, tokens[1:])
             while True:
                 try:
@@ -211,51 +177,153 @@ class TimeLocaleSet(object):
 
                 fmt = self._equivalents.get(fmt, fmt)
                 if prefix != '':
-                    patterns[prefix.casefold()]["#" + fmt].update(locales)
+                    prefixes[prefix.casefold()][fmt].update(map(uniqlocales, locales))
                 if suffix != '':
-                    patterns[suffix.casefold()][fmt + "#"].update(locales)
+                    suffixes[suffix.casefold()][fmt].update(map(uniqlocales, locales))
 
-        for k, fmt in self._text_keywords.items():
-            for v, locales in getattr(self, k).items():
-                for word in v.split(";"):
-                    patterns[word.strip().casefold()][fmt].update(locales)
+        for pattern, fmts in self._global_prefixes:
+            prefixes[pattern] = dict.fromkeys(fmts, frozenset())
 
-        for pattern, fmts in self._global_patterns.items():
-            patterns[pattern] = dict.fromkeys(fmts, frozenset())
+        for pattern, fmts in self._global_suffixes:
+            suffixes[pattern] = dict.fromkeys(fmts, frozenset())
 
-        for fmt, merges in self._merge_patterns:
-            merged = set.union(*(patterns[pattern][fmt] for pattern in merges))
-            for pattern in merges:
-                patterns[pattern][fmt] = merged
-
-        for timezone in pytz.all_timezones:
-            tz = pytz.timezone(timezone)
-            if hasattr(tz, "_transition_info"):
-                shortnames = set(tzname for _, _, tzname in tz._transition_info)
-            else:
-                shortnames = [tz._tzname]
-            for tzname in shortnames:
-                if tzname[0] not in "+-":
-                    patterns[tzname.casefold()]["Z"] = frozenset()
-
-        localesets = _InternTable()
-
-        return {
+        self._prefixes = {
             pattern: tuple(
-                (fmt, localesets(tuple(sorted(locales))))
+                (fmt, uniqlocalesets(tuple(sorted(locales))))
                 for fmt, locales in fmts.items()
             )
-            for pattern, fmts in patterns.items()
+            for pattern, fmts in prefixes.items()
         }
+
+        self._suffixes = {
+            pattern: tuple(
+                (fmt, uniqlocalesets(tuple(sorted(locales))))
+                for fmt, locales in fmts.items()
+            )
+            for pattern, fmts in suffixes.items()
+        }
+
+    @property
+    def keywords(self):
+        """
+        Group conversion specifiers by the non-numeric strings they can
+        produce. This includes these specifiers:
+
+        - Weekday names: ``%a``
+        - Month names: ``%b``
+        - AM/PM: ``%p``
+        - Timezone abbreviations: ``%Z``
+        - Non-decimal numbers: ``%O`` prefix (e.g. ``%Om`` for months)
+
+        >>> glibc = TimeLocaleSet.default('glibc').keywords
+
+        Many strings can only be produced by a single conversion specifier in a
+        single locale. For example, according to the glibc locale database,
+        "Agustus" is the ``id_ID`` (Indonesian) word for the 8th month, and
+        does not appear in any other locale.
+
+        >>> sorted(glibc['agustus'])
+        [('b', ('id_ID',))]
+
+        However, other strings can be ambiguous. For example, "Ahad" is the
+        word for Sunday in ``ms_MY`` (the Malay language locale for Malaysia),
+        but the word for Wednesday in ``kab_DZ`` (the Kabyle language locale
+        for Algeria). These languages are from entirely different language
+        families but we can't tell them apart if all we see is this one word.
+        However, in either case we do know that the word refers to a weekday.
+
+        >>> sorted(glibc['ahad'])
+        [('a', ('kab_DZ', 'ms_MY'))]
+
+        Sometimes, without context, we can't even tell which role a word plays.
+        "An" is the word for Tuesday in ``lt_LT`` (Lithuanian), but hours
+        before noon are distinguished with "AN" in ``ak_GH`` (the Akan locale
+        for Ghana).
+
+        >>> sorted(glibc['an'])
+        [('a', ('lt_LT',)), ('p', ('ak_GH',))]
+
+        Similarly, "AWST" is the timezone abbreviation for Australian Western
+        Standard Time, while "Awst" is the ``cy_GB`` (Welsh) word for the 8th
+        month.
+
+        >>> sorted(glibc['awst'])
+        [('Z', ()), ('b', ('cy_GB',))]
+
+        Finally, in Chinese, Monday through Saturday are abbreviated using the
+        numbers 1-6, and those numbers are written using the same characters in
+        Japanese. So if we see those numbers, they could either be from numeric
+        conversions such as ``%Od``, or from the abbreviated weekday
+        conversion, ``%a``.
+
+        >>> sorted(glibc['一'])
+        [('O', ('ja_JP', 'lzh_TW')), ('a', ('cmn_TW', 'hak_TW', 'lzh_TW', 'nan_TW', 'yue_HK', 'zh_CN', 'zh_HK', 'zh_SG', 'zh_TW'))]
+        """
+        return self._keywords
+
+    @property
+    def prefixes(self):
+        """
+        Group conversion specifiers by the strings which may precede them.
+
+        >>> glibc = TimeLocaleSet.default('glibc').prefixes
+
+        In ``vi_VN`` (Vietnamese), "tháng" means "month", and "năm" means
+        "year". Within the glibc locale database, we find that these words are
+        used as prefix to the numeric value in question:
+
+        >>> sorted(glibc['tháng'])
+        [('m', ('vi_VN',))]
+        >>> sorted(glibc['năm'])
+        [('y', ('vi_VN',))]
+        """
+        return self._prefixes
+
+    @property
+    def suffixes(self):
+        """
+        Group conversion specifiers by the strings which may follow them.
+
+        >>> suffixes = TimeLocaleSet(formats={
+        ...     '%a, %Y.eko %bren %da': {'eu_ES'},
+        ...     '%Y年%m月%d日': {'ja_JP'},
+        ... }).suffixes
+
+        In ``eu_ES`` (the Basque locale for Spain), year/month/day are followed
+        by "eko", "ren", and "a", respectively. However, in our sample format
+        string, "ren" follows ``%b``, which is the name of a month, not its
+        number. So we don't extract it as a suffix; we rely on month names
+        being sufficiently distinctive instead.
+
+        >>> sorted(suffixes['eko'])
+        [('y', ('eu_ES',))]
+        >>> 'ren' in suffixes
+        False
+        >>> sorted(suffixes['a'])
+        [('d', ('eu_ES',))]
+
+        In ``ja_JP`` (Japanese), year/month/day are followed by "年", "月", and
+        "日", respectively. Since our sample format string uses only numeric
+        conversion specifiers, we extract all three as valid suffixes for their
+        corresponding conversions.
+
+        >>> sorted(suffixes['年'])
+        [('y', ('ja_JP',))]
+        >>> sorted(suffixes['月'])
+        [('m', ('ja_JP',))]
+        >>> sorted(suffixes['日'])
+        [('d', ('ja_JP',))]
+        """
+        return self._suffixes
 
 if __name__ == "__main__":
     locale_set = TimeLocaleSet.default()
-    patterns = locale_set.extract_patterns()
+    patterns = locale_set.keywords
 
     for pattern, fmts in sorted(patterns.items()):
         #if len(fmts) <= 1:
         #    continue
         print("{!r}:".format(pattern))
-        for fmt, locales in sorted(fmts.items()):
+        for fmt, locales in sorted(fmts):
             print("- {}: {}".format(fmt, ' '.join(sorted(locales))))
         print()
