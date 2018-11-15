@@ -160,26 +160,20 @@ class TimeLocaleSet(object):
         # TODO: extract patterns from era
 
         for v, locales in (formats or {}).items():
-            tokens = self._fmt_token.split(v)
-            pairs = zip(tokens, tokens[1:])
-            while True:
-                try:
-                    prefix, fmt = next(pairs)
-                    fmt2, suffix = next(pairs)
-                except StopIteration:
-                    break
-                assert fmt == fmt2
-
+            tokens = iter(self._fmt_token.split(v))
+            prefix = next(tokens)
+            for fmt, suffix in zip(tokens, tokens):
                 # We don't need to look at surrounding context to recognize the
                 # names of weekdays, months, or morning/afternoon.
-                if fmt.lower() in "abp":
-                    continue
+                if fmt.lower() not in "abp":
+                    fmt = self._equivalents.get(fmt, fmt)
+                    if prefix != '':
+                        prefixes[prefix.casefold()][fmt].update(map(uniqlocales, locales))
+                    if suffix != '':
+                        suffixes[suffix.casefold()][fmt].update(map(uniqlocales, locales))
 
-                fmt = self._equivalents.get(fmt, fmt)
-                if prefix != '':
-                    prefixes[prefix.casefold()][fmt].update(map(uniqlocales, locales))
-                if suffix != '':
-                    suffixes[suffix.casefold()][fmt].update(map(uniqlocales, locales))
+                # This conversion's suffix is the next conversion's prefix.
+                prefix = suffix
 
         for pattern, fmts in self._global_prefixes:
             prefixes[pattern] = dict.fromkeys(fmts, frozenset())
