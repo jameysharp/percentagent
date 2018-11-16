@@ -102,36 +102,54 @@ class DateParser(object):
                 for fmt, locales in keyword
             ])
 
+        # Admissable heuristic: compute the best score each group could
+        # possibly achieve, ignoring conflicts. Then accumulate those scores
+        # from right to left, so optimistic_scores[0] is the sum over all
+        # groups, and [1] is all but the first group, etc.
+        optimistic_scores = list(itertools.accumulate(
+            max(
+                (fmt[0] == "%") + (prefix is not None) + (suffix is not None)
+                for fmt, locales, prefix, suffix in group
+            )
+            for group in reversed(groups)
+        ))
+        optimistic_scores.reverse()
+
         best_quality = None
         best_candidates = []
 
-        # TODO: depth-first branch-and-bound and dynamic variable/value order
+        # TODO: dynamic variable/value order
         partials = [_State().children(groups[0])]
         while partials:
             try:
-                state = next(partials[-1])
+                quality, locales, state = next(partials[-1])
             except StopIteration:
                 partials.pop()
                 continue
 
             if len(partials) < len(groups):
-                partials.append(state.children(groups[len(partials)]))
-                continue
+                if best_quality is not None:
+                    heuristic = (state.unless_conversion is not None) + optimistic_scores[len(partials)]
+                    if quality + heuristic < best_quality:
+                        # Even assuming the remaining groups get the highest
+                        # possible score, this state is still not good enough.
+                        continue
 
-            try:
-                fmts, locales, quality = state.finish()
-            except ValueError:
+                partials.append(state.children(groups[len(partials)]))
                 continue
 
             if best_quality is not None and quality < best_quality:
                 # We've seen better, so skip this one.
                 continue
 
+            if not state.valid():
+                continue
+
             if quality != best_quality:
                 best_quality = quality
                 best_candidates = []
 
-            pattern = ''.join(lit + fmt for lit, fmt in zip(literals, fmts + ('',))).replace("%C%y", "%Y")
+            pattern = ''.join(lit + fmt for lit, fmt in zip(literals, state.fmts + ('',))).replace("%C%y", "%Y")
             best_candidates.append((pattern, locales))
         return best_candidates
 
@@ -209,14 +227,14 @@ class _State(object):
             new.unless_conversion = suffix
 
             new.fmts = self.fmts + (fmt,)
-            yield new
+            yield new.score()
 
-    def finish(self):
+    def valid(self):
         if self.seen.intersection(self._all_date_formats) and not self.seen.issuperset(self._min_date_formats):
-            raise ValueError("incomplete date specification")
+            return False
 
         if self.seen.intersection(self._all_time_formats) and not self.seen.issuperset(self._min_time_formats):
-            raise ValueError("incomplete time specification")
+            return False
 
         conversions = ''.join(
                 self._same_fields.get(fmt[-1], fmt[-1])
@@ -225,8 +243,11 @@ class _State(object):
             )
 
         if self._bad_order.search(conversions):
-            raise ValueError("prohibited conversion ordering")
+            return False
 
+        return True
+
+    def score(self):
         satisfied_locales = self.required_locales
         locally_satisfied = 0
         if self.required_locales:
@@ -239,7 +260,7 @@ class _State(object):
                 locale for locale, count in satisfied
                 if count == locally_satisfied
             )
-        return self.fmts, satisfied_locales, self.globally_satisfied + locally_satisfied
+        return self.globally_satisfied + locally_satisfied, satisfied_locales, self
 
     _same_fields = {
         'b': 'm',
