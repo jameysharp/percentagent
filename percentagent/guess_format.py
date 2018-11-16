@@ -201,18 +201,18 @@ class _State(object):
 
     def children(self, options):
         for fmt, locales, prefix, suffix in options:
-            new = copy.copy(self)
-
-            if locales:
+            if not locales:
+                locales = self.required_locales
+            else:
                 if self.required_locales:
                     if locales.isdisjoint(self.required_locales):
                         continue
                     locales = locales.intersection(self.required_locales)
-                new.required_locales = locales
 
             is_conversion = fmt[0] == "%"
-            new.globally_satisfied += is_conversion
 
+            seen = self.seen
+            category = self.previous_category
             if is_conversion:
                 category = fmt[-1]
                 if category == "b":
@@ -221,8 +221,6 @@ class _State(object):
 
                 if category in self.seen:
                     continue
-                new.seen = self.seen.union((category,))
-                new.previous_category = category
 
                 if self.previous_category == "C":
                     if category != "y":
@@ -246,6 +244,14 @@ class _State(object):
                 elif category == "S":
                     if self.previous_category != "M":
                         continue
+
+                seen = self.seen.union((category,))
+
+            new = copy.copy(self)
+            new.required_locales = locales
+            new.previous_category = category
+            new.seen = seen
+            new.globally_satisfied += is_conversion
 
             local_satisfied = (
                 None if is_conversion else self.unless_conversion,
