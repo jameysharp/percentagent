@@ -102,19 +102,6 @@ class DateParser(object):
                 for fmt, locales in keyword
             ])
 
-        # Admissable heuristic: compute the best score each group could
-        # possibly achieve, ignoring conflicts. Then accumulate those scores
-        # from right to left, so optimistic_scores[0] is the sum over all
-        # groups, and [1] is all but the first group, etc.
-        optimistic_scores = list(itertools.accumulate(
-            max(
-                (fmt[0] == "%") + (prefix is not None) + (suffix is not None)
-                for fmt, locales, prefix, suffix in group
-            )
-            for group in reversed(groups)
-        ))
-        optimistic_scores.reverse()
-
         best_quality = None
         best_candidates = []
 
@@ -127,15 +114,34 @@ class DateParser(object):
                 partials.pop()
                 continue
 
-            if len(partials) < len(groups):
+            remaining_groups = groups[len(partials):]
+            if remaining_groups:
                 if best_quality is not None:
-                    heuristic = (state.unless_conversion is not None) + optimistic_scores[len(partials)]
+                    # Admissable heuristic: compute the best score each group
+                    # could possibly achieve. Don't count conversion specifiers
+                    # that we've already used, but don't worry about conflicts
+                    # in the groups we haven't assigned yet. Any such conflicts
+                    # can only reduce the resulting score, and we only need to
+                    # make sure that the heuristic is at least as large as the
+                    # true value of the best leaf in this subtree. However, the
+                    # more precise we can be here, the fewer nodes we have to
+                    # search, so we can spend some CPU time on precision and
+                    # still come out ahead.
+                    heuristic = (state.unless_conversion is not None) + sum(
+                        max((
+                            1 + (prefix is not None) + (suffix is not None)
+                            for fmt, locales, prefix, suffix in group
+                            if fmt[0] == "%" and fmt[-1] not in state.seen
+                        ), default=0)
+                        for group in remaining_groups
+                    )
+
                     if quality + heuristic < best_quality:
                         # Even assuming the remaining groups get the highest
                         # possible score, this state is still not good enough.
                         continue
 
-                partials.append(state.children(groups[len(partials)]))
+                partials.append(state.children(remaining_groups[0]))
                 continue
 
             if best_quality is not None and quality < best_quality:
