@@ -186,6 +186,7 @@ class _State(object):
     def __init__(self):
         self.fmts = ()
         self.seen = frozenset()
+        self.previous_category = None
         self.required_locales = None
         self.satisfied = Counter()
         self.globally_satisfied = 0
@@ -211,6 +212,30 @@ class _State(object):
                 if category in self.seen:
                     continue
                 new.seen = self.seen.union((category,))
+                new.previous_category = category
+
+                if self.previous_category == "C":
+                    if category != "y":
+                        continue
+                elif self.previous_category == "m":
+                    if "d" not in self.seen and category != "d":
+                        continue
+                elif self.previous_category == "d":
+                    if "m" not in self.seen and category != "m":
+                        continue
+                elif self.previous_category == "H":
+                    if category != "M":
+                        continue
+
+                if category == "C":
+                    if "y" in self.seen:
+                        continue
+                elif category == "M":
+                    if self.previous_category != "H":
+                        continue
+                elif category == "S":
+                    if self.previous_category != "M":
+                        continue
 
             local_satisfied = (
                 None if is_conversion else self.unless_conversion,
@@ -234,15 +259,6 @@ class _State(object):
             return False
 
         if self.seen.intersection(self._all_time_formats) and not self.seen.issuperset(self._min_time_formats):
-            return False
-
-        conversions = ''.join(
-                self._same_fields.get(fmt[-1], fmt[-1])
-                for fmt in self.fmts
-                if fmt[0] == '%'
-            )
-
-        if self._bad_order.search(conversions):
             return False
 
         return True
@@ -269,7 +285,6 @@ class _State(object):
     _all_date_formats = _min_date_formats + "Ca"
     _min_time_formats = "HM"
     _all_time_formats = _min_time_formats + "SpzZ"
-    _bad_order = re.compile(r'C(?!y)|(?<!d)m(?!d)|(?<!H)M|(?<!M)S')
 
 if __name__ == "__main__":
     parser = DateParser()
