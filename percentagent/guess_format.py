@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from collections import Counter
+import copy
 import itertools
 import re
 
@@ -25,9 +26,6 @@ class DateParser(object):
 
     _whitespace = re.compile(r'\s+')
     _numeric_formats = "CymdHMS"
-    _same_fields = {
-        'b': 'm',
-    }
 
     def __init__(self, locale_set=None):
         if locale_set is None:
@@ -96,6 +94,9 @@ class DateParser(object):
         literals = segments[::2]
         raw = segments[1::2]
 
+        if not raw:
+            return
+
         case = list(map(str.casefold, raw))
         prefixes = [{}] + [dict(self.locale_set.prefixes.get(match, ())) for match in case[:-1]]
         suffixes = [dict(self.locale_set.suffixes.get(match, ())) for match in case[1:]] + [{}]
@@ -114,14 +115,22 @@ class DateParser(object):
                 for fmt, locales in keyword
             ])
 
-        # FIXME: evaluating the full cartesian product is inefficient
         # TODO: depth-first branch-and-bound and dynamic variable/value order
-        for candidate in itertools.product(*groups):
+        partials = [_State().children(groups[0])]
+        while partials:
             try:
-                fmts, locales, quality = self._satisfied_hints(candidate)
-            except ValueError as e:
+                state = next(partials[-1])
+            except StopIteration:
+                partials.pop()
                 continue
-            if not self._validate_conversions(fmts):
+
+            if len(partials) < len(groups):
+                partials.append(state.children(groups[len(partials)]))
+                continue
+
+            try:
+                fmts, locales, quality = state.finish()
+            except ValueError:
                 continue
             pattern = ''.join(lit + fmt for lit, fmt in zip(literals, fmts + ('',))).replace("%C%y", "%Y")
             yield quality, pattern, locales
@@ -155,82 +164,91 @@ class DateParser(object):
             return tuple(("%" + fmt, None) for fmt in legal)
         return ()
 
-    def _satisfied_hints(self, candidate):
-        fmts = []
-        required_locales = None
-        satisfied = Counter()
-        globally_satisfied = 0
-        was_conversion = True
-        unless_conversion = None
-        for fmt, locales, prefix, suffix in candidate:
-            fmts.append(fmt)
+class _State(object):
+    def __init__(self):
+        self.fmts = ()
+        self.seen = frozenset()
+        self.required_locales = None
+        self.satisfied = Counter()
+        self.globally_satisfied = 0
+        self.was_conversion = True
+        self.unless_conversion = None
+
+    def children(self, options):
+        for fmt, locales, prefix, suffix in options:
+            new = copy.copy(self)
+
             if locales:
-                if required_locales:
-                    if locales.isdisjoint(required_locales):
-                        raise ValueError("expected {} but {} is disjoint".format(','.join(required_locales), ','.join(locales)))
-                    locales = locales.intersection(required_locales)
-                required_locales = locales
+                if self.required_locales:
+                    if locales.isdisjoint(self.required_locales):
+                        continue
+                    locales = locales.intersection(self.required_locales)
+                new.required_locales = locales
 
             is_conversion = fmt[0] == "%"
-            globally_satisfied += is_conversion
+            new.globally_satisfied += is_conversion
+
+            if is_conversion:
+                category = self._same_fields.get(fmt[-1], fmt[-1])
+                if category in self.seen:
+                    continue
+                new.seen = self.seen.union((category,))
 
             local_satisfied = (
-                None if is_conversion else unless_conversion,
-                None if was_conversion else prefix,
+                None if is_conversion else self.unless_conversion,
+                None if self.was_conversion else prefix,
             )
             for hint in local_satisfied:
                 if hint:
-                    satisfied.update(hint)
+                    new.satisfied = self.satisfied.copy()
+                    new.satisfied.update(hint)
                 elif hint is not None:
-                    globally_satisfied += 1
+                    new.globally_satisfied += 1
 
-            was_conversion = is_conversion
-            unless_conversion = suffix
+            new.was_conversion = is_conversion
+            new.unless_conversion = suffix
 
-        satisfied_locales = required_locales
+            new.fmts = self.fmts + (fmt,)
+            yield new
+
+    def finish(self):
+        if self.seen.intersection(self._all_date_formats) and not self.seen.issuperset(self._min_date_formats):
+            raise ValueError("incomplete date specification")
+
+        if self.seen.intersection(self._all_time_formats) and not self.seen.issuperset(self._min_time_formats):
+            raise ValueError("incomplete time specification")
+
+        conversions = ''.join(
+                self._same_fields.get(fmt[-1], fmt[-1])
+                for fmt in self.fmts
+                if fmt[0] == '%'
+            )
+
+        if self._bad_order.search(conversions):
+            raise ValueError("prohibited conversion ordering")
+
+        satisfied_locales = self.required_locales
         locally_satisfied = 0
-        if required_locales:
-            satisfied = [ (k, v) for k, v in satisfied.items() if k in required_locales ]
+        if self.required_locales:
+            satisfied = [ (k, v) for k, v in self.satisfied.items() if k in self.required_locales ]
         else:
-            satisfied = list(satisfied.items())
+            satisfied = list(self.satisfied.items())
         if satisfied:
             locally_satisfied = max(v for k, v in satisfied)
             satisfied_locales = frozenset(
                 locale for locale, count in satisfied
                 if count == locally_satisfied
             )
-        return tuple(fmts), satisfied_locales, (globally_satisfied + locally_satisfied)
+        return self.fmts, satisfied_locales, self.globally_satisfied + locally_satisfied
 
+    _same_fields = {
+        'b': 'm',
+    }
     _min_date_formats = "ymd"
     _all_date_formats = _min_date_formats + "Ca"
     _min_time_formats = "HM"
     _all_time_formats = _min_time_formats + "SpzZ"
     _bad_order = re.compile(r'C(?!y)|(?<!d)m(?!d)|(?<!H)M|(?<!M)S')
-
-    @classmethod
-    def _validate_conversions(cls, fmts):
-        conversions = ''.join(
-                cls._same_fields.get(fmt[-1], fmt[-1])
-                for fmt in fmts
-                if fmt[0] == '%'
-            )
-
-        fmt_set = set(conversions)
-
-        # No duplicate conversions.
-        if len(fmt_set) != len(conversions):
-            return False
-
-        if fmt_set.intersection(cls._all_date_formats) and not fmt_set.issuperset(cls._min_date_formats):
-            return False
-
-        if fmt_set.intersection(cls._all_time_formats) and not fmt_set.issuperset(cls._min_time_formats):
-            return False
-
-        if cls._bad_order.search(conversions):
-            return False
-
-        return True
 
 if __name__ == "__main__":
     parser = DateParser()
