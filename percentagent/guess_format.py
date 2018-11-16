@@ -78,24 +78,11 @@ class DateParser(object):
         """
 
         segments = self.compiled.split(self._whitespace.sub(" ", s))
-        best_quality = None
-        best_candidates = []
-        for quality, pattern, locales in self._candidates(segments):
-            if best_quality is not None and quality < best_quality:
-                # We've seen better, so skip this one.
-                continue
-            if quality != best_quality:
-                best_quality = quality
-                best_candidates = []
-            best_candidates.append((pattern, locales))
-        return best_candidates
-
-    def _candidates(self, segments):
         literals = segments[::2]
         raw = segments[1::2]
 
         if not raw:
-            return
+            return []
 
         case = list(map(str.casefold, raw))
         prefixes = [{}] + [dict(self.locale_set.prefixes.get(match, ())) for match in case[:-1]]
@@ -115,6 +102,9 @@ class DateParser(object):
                 for fmt, locales in keyword
             ])
 
+        best_quality = None
+        best_candidates = []
+
         # TODO: depth-first branch-and-bound and dynamic variable/value order
         partials = [_State().children(groups[0])]
         while partials:
@@ -132,8 +122,18 @@ class DateParser(object):
                 fmts, locales, quality = state.finish()
             except ValueError:
                 continue
+
+            if best_quality is not None and quality < best_quality:
+                # We've seen better, so skip this one.
+                continue
+
+            if quality != best_quality:
+                best_quality = quality
+                best_candidates = []
+
             pattern = ''.join(lit + fmt for lit, fmt in zip(literals, fmts + ('',))).replace("%C%y", "%Y")
-            yield quality, pattern, locales
+            best_candidates.append((pattern, locales))
+        return best_candidates
 
     def _lookup_keyword(self, raw):
         keyword = raw.casefold()
