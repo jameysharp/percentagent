@@ -25,7 +25,6 @@ class DateParser(object):
     """
 
     _whitespace = re.compile(r'\s+')
-    _numeric_formats = "CymdHMS"
 
     def __init__(self, locale_set=None):
         if locale_set is None:
@@ -163,30 +162,35 @@ class DateParser(object):
         keyword = raw.casefold()
         found = self.locale_set.keywords.get(keyword)
         if found:
-            ret = { "%" + fmt: frozenset(locales) for fmt, locales in found }
-            if "%O" in ret:
-                locales = ret.pop("%O")
-                # TODO: find the index of `keyword` in alt_digits
-                ret.update(("%O" + fmt, locales) for fmt in self._numeric_formats)
-            return tuple(ret.items())
+            ret = []
+            for fmt, value, locales in found:
+                locales = frozenset(locales)
+                if fmt == "O":
+                    ret.extend(self._legal_number("%O", value, locales))
+                else:
+                    ret.append(("%" + fmt, locales))
+            return tuple(ret)
         if keyword[0] in "+-":
             if keyword[1:].isdigit():
                 return (("%z", None),)
         elif keyword.isdigit():
-            value = int(keyword)
-            legal = set("Cy")
-            if value <= 60:
-                legal.update("S")
-                if value <= 59:
-                    legal.update("M")
-                    if value <= 23:
-                        legal.update("H")
-                    if 1 <= value <= 31:
-                        legal.update("d")
-                        if value <= 12:
-                            legal.update("m")
-            return tuple(("%" + fmt, None) for fmt in legal)
+            return tuple(self._legal_number("%", int(keyword), None))
         return ()
+
+    @staticmethod
+    def _legal_number(prefix, value, locales):
+        legal = set("Cy")
+        if value <= 60:
+            legal.update("S")
+            if value <= 59:
+                legal.update("M")
+                if value <= 23:
+                    legal.update("H")
+                if 1 <= value <= 31:
+                    legal.update("d")
+                    if value <= 12:
+                        legal.update("m")
+        return ((prefix + fmt, locales) for fmt in legal)
 
 class _State(object):
     def __init__(self):

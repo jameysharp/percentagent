@@ -47,10 +47,10 @@ class TimeLocaleSet(object):
             return cls.from_json(f)
 
     @classmethod
-    def _localized_conversion(cls, uniq, keywords, fmt, d):
+    def _localized_conversion(cls, uniq, keywords, fmt, offset, d):
         for v, locales in d.items():
-            for word in v.split(";"):
-                keywords[word.strip().casefold()][fmt].update(map(uniq, locales))
+            for value, word in enumerate(v.split(";"), offset):
+                keywords[word.strip().casefold()][fmt, value].update(map(uniq, locales))
 
     _equivalents = {
         'e': 'd',
@@ -78,8 +78,8 @@ class TimeLocaleSet(object):
     )
 
     _merge_patterns = (
-        ("p", ("am", "a.m.")),
-        ("p", ("pm", "p.m.")),
+        (("p", 0), ("am", "a.m.")),
+        (("p", 1), ("pm", "p.m.")),
     )
 
     # These symbols never provide semantic information about neighboring conversion
@@ -126,10 +126,10 @@ class TimeLocaleSet(object):
         uniqlocalesets = _InternTable()
 
         keywords = defaultdict(lambda: defaultdict(set))
-        self._localized_conversion(uniqlocales, keywords, "a", day or {})
-        self._localized_conversion(uniqlocales, keywords, "b", mon or {})
-        self._localized_conversion(uniqlocales, keywords, "p", am_pm or {})
-        self._localized_conversion(uniqlocales, keywords, "O", alt_digits or {})
+        self._localized_conversion(uniqlocales, keywords, "a", 0, day or {})
+        self._localized_conversion(uniqlocales, keywords, "b", 1, mon or {})
+        self._localized_conversion(uniqlocales, keywords, "p", 0, am_pm or {})
+        self._localized_conversion(uniqlocales, keywords, "O", 0, alt_digits or {})
 
         for fmt, merges in self._merge_patterns:
             merged = set.union(*(keywords[pattern][fmt] for pattern in merges))
@@ -144,12 +144,13 @@ class TimeLocaleSet(object):
                 shortnames = [tz._tzname]
             for tzname in shortnames:
                 if tzname[0] not in "+-":
-                    keywords[tzname.casefold()]["Z"] = frozenset()
+                    # TODO: set conversion value to a set of tz.zone or something
+                    keywords[tzname.casefold()]["Z", ()] = frozenset()
 
         self._keywords = {
             pattern: tuple(
-                (fmt, uniqlocalesets(tuple(sorted(locales))))
-                for fmt, locales in fmts.items()
+                (fmt, value, uniqlocalesets(tuple(sorted(locales))))
+                for (fmt, value), locales in fmts.items()
             )
             for pattern, fmts in keywords.items()
         }
@@ -217,7 +218,7 @@ class TimeLocaleSet(object):
         does not appear in any other locale.
 
         >>> sorted(glibc['agustus'])
-        [('b', ('id_ID',))]
+        [('b', 8, ('id_ID',))]
 
         However, other strings can be ambiguous. For example, "Ahad" is the
         word for Sunday in ``ms_MY`` (the Malay language locale for Malaysia),
@@ -227,7 +228,7 @@ class TimeLocaleSet(object):
         However, in either case we do know that the word refers to a weekday.
 
         >>> sorted(glibc['ahad'])
-        [('a', ('kab_DZ', 'ms_MY'))]
+        [('a', 0, ('ms_MY',)), ('a', 3, ('kab_DZ',))]
 
         Sometimes, without context, we can't even tell which role a word plays.
         "An" is the word for Tuesday in ``lt_LT`` (Lithuanian), but hours
@@ -235,14 +236,14 @@ class TimeLocaleSet(object):
         for Ghana).
 
         >>> sorted(glibc['an'])
-        [('a', ('lt_LT',)), ('p', ('ak_GH',))]
+        [('a', 2, ('lt_LT',)), ('p', 0, ('ak_GH',))]
 
         Similarly, "AWST" is the timezone abbreviation for Australian Western
         Standard Time, while "Awst" is the ``cy_GB`` (Welsh) word for the 8th
         month.
 
         >>> sorted(glibc['awst'])
-        [('Z', ()), ('b', ('cy_GB',))]
+        [('Z', (), ()), ('b', 8, ('cy_GB',))]
 
         Finally, in Chinese, Monday through Saturday are abbreviated using the
         numbers 1-6, and those numbers are written using the same characters in
@@ -251,7 +252,7 @@ class TimeLocaleSet(object):
         conversion, ``%a``.
 
         >>> sorted(glibc['一'])
-        [('O', ('ja_JP', 'lzh_TW')), ('a', ('cmn_TW', 'hak_TW', 'lzh_TW', 'nan_TW', 'yue_HK', 'zh_CN', 'zh_HK', 'zh_SG', 'zh_TW'))]
+        [('O', 1, ('ja_JP', 'lzh_TW')), ('a', 1, ('cmn_TW', 'hak_TW', 'lzh_TW', 'nan_TW', 'yue_HK', 'zh_CN', 'zh_HK', 'zh_SG', 'zh_TW'))]
         """
         return self._keywords
 
