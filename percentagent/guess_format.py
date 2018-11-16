@@ -287,7 +287,19 @@ class _State(object):
     _all_time_formats = _min_time_formats + "SpzZ"
 
 if __name__ == "__main__":
-    parser = DateParser()
+    import time
+    import timeit
+
+    locale_set = TimeLocaleSet.default()
+    timer = timeit.Timer('TimeLocaleSet.default()', timer=time.process_time, globals={'TimeLocaleSet': TimeLocaleSet})
+    perf = min(timer.repeat(repeat=5, number=1))
+    print("locale setup: {:.2f}ms".format(1000 * perf))
+
+    parser = DateParser(locale_set)
+    timer = timeit.Timer('DateParser(locale_set)', timer=time.process_time, globals={'DateParser': DateParser, 'locale_set': locale_set})
+    perf = min(timer.repeat(repeat=5, number=1))
+    print("parser setup: {:.2f}ms".format(1000 * perf))
+
     examples = (
         "5/5/2018, 4:45:18 AM",
         "20180505T114518Z",
@@ -308,8 +320,16 @@ if __name__ == "__main__":
         "Misálá mítáno 9 sánzá ya zómi na mɔ̌kɔ́ 2018, 17:57:39 (UTC-0800)",
         "جۆمعه ۰۹ نوْوامبر ۱۸، ساعات ۱۷:۵۷:۳۹ (PST)",
     )
+    times = []
     for example in examples:
         print(repr(example))
         for fmt, locales in parser.parse(example):
             print("- {!r} ({})".format(fmt, ' '.join(sorted(locales or ["C"]))))
+        timer = timeit.Timer('parser.parse(example)', timer=time.process_time, globals={'parser': parser, 'example': example})
+        perf = min(timer.repeat(repeat=10, number=3)) / 3
+        times.append(perf)
+        print("{:.2f}ms".format(1000 * perf))
         print()
+
+    times.sort()
+    print(" ".join("{:.2f}ms".format(1000 * time) for time in times))
