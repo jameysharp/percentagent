@@ -214,7 +214,11 @@ class _State(object):
             new.globally_satisfied += is_conversion
 
             if is_conversion:
-                category = self._same_fields.get(fmt[-1], fmt[-1])
+                category = fmt[-1]
+                if category == "b":
+                    # Month-names should be treated like numeric months.
+                    category = "m"
+
                 if category in self.seen:
                     continue
                 new.seen = self.seen.union((category,))
@@ -284,9 +288,6 @@ class _State(object):
             )
         return self.globally_satisfied + locally_satisfied, satisfied_locales, self
 
-    _same_fields = {
-        'b': 'm',
-    }
     _min_date_formats = "ymd"
     _all_date_formats = _min_date_formats + "Ca"
     _min_time_formats = "HM"
