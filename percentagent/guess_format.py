@@ -91,7 +91,7 @@ class DateParser(object):
         for keyword, prefix, suffix in zip(keywords, prefixes, suffixes):
             if "y" in prefix:
                 prefix["C"] = tuple(set(prefix["y"] + prefix.get("C", ())))
-            groups.append([
+            groups.append(sorted((
                 (
                     fmt,
                     locales,
@@ -99,12 +99,11 @@ class DateParser(object):
                     suffix.get(fmt[-1]) if fmt[0] == "%" else None,
                 )
                 for fmt, locales in keyword
-            ])
+            ), key=lambda option: self._optimistic_score(*option), reverse=True))
 
         best_quality = None
         best_candidates = []
 
-        # TODO: dynamic variable/value order
         partials = [_State().children(groups[0])]
         while partials:
             try:
@@ -127,11 +126,11 @@ class DateParser(object):
                     # search, so we can spend some CPU time on precision and
                     # still come out ahead.
                     heuristic = (state.unless_conversion is not None) + sum(
-                        max((
-                            1 + (prefix is not None) + (suffix is not None)
+                        next((
+                            self._optimistic_score(fmt, locales, prefix, suffix)
                             for fmt, locales, prefix, suffix in group
                             if fmt[0] == "%" and fmt[-1] not in state.seen
-                        ), default=0)
+                        ), 0)
                         for group in remaining_groups
                     )
 
@@ -191,6 +190,10 @@ class DateParser(object):
                     if value <= 12:
                         legal.update("m")
         return ((prefix + fmt, locales) for fmt in legal)
+
+    @staticmethod
+    def _optimistic_score(fmt, locales, prefix, suffix):
+        return (fmt[0] == "%") + (prefix is not None) + (suffix is not None)
 
 class _State(object):
     def __init__(self):
