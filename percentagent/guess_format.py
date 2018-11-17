@@ -87,29 +87,42 @@ class DateParser(object):
         case = list(map(str.casefold, raw))
         prefixes = [{}] + [dict(self.locale_set.prefixes.get(match, ())) for match in case[:-1]]
         suffixes = [dict(self.locale_set.suffixes.get(match, ())) for match in case[1:]] + [{}]
-        keywords = [self._lookup_keyword(match) + ((match, (), None),) for match in raw]
-        groups = []
+        keywords = map(self._lookup_keyword, raw)
+
+        groups = _DateTime(**{ field: [] for field in _DateTime._fields })
+        always_literal = set()
         for idx, (keyword, prefix, suffix) in enumerate(zip(keywords, prefixes, suffixes)):
             if "y" in prefix:
                 prefix["C"] = tuple(set(prefix["y"] + prefix.get("C", ())))
-            groups.append(sorted((
-                (
-                    fmt,
-                    idx,
-                    value,
-                    locales,
-                    prefix.get(fmt[-1]) if fmt[0] == "%" else None,
-                    suffix.get(fmt[-1]) if fmt[0] == "%" else None,
-                )
-                for fmt, value, locales in keyword
-            ), key=lambda option: self._optimistic_score(*option), reverse=True))
+            if not keyword:
+                always_literal.add(idx)
+            else:
+                for fmt, value, locales in keyword:
+                    category = fmt[-1]
+                    if category == "b":
+                        category = "m"
+                    elif category == "z":
+                        category = "Z"
+                    getattr(groups, category).append((
+                        fmt,
+                        idx,
+                        value,
+                        locales,
+                        prefix.get(fmt[-1]),
+                        suffix.get(fmt[-1]),
+                    ))
+
+        for group in groups:
+            group.sort(key=lambda option: self._optimistic_score(*option), reverse=True)
+
+        groups = sorted(filter(None, groups), key=len)
 
         best_quality = None
         best_candidates = []
 
-        groups.sort(key=len)
-
-        partials = [_State().children(groups[0])]
+        root = _State()
+        root.unconverted = frozenset(always_literal)
+        partials = [root.children(groups[0])]
         while partials:
             try:
                 quality, locales, state = next(partials[-1])
@@ -134,7 +147,7 @@ class DateParser(object):
                         next((
                             self._optimistic_score(fmt, idx, value, locales, prefix, suffix)
                             for fmt, idx, value, locales, prefix, suffix in group
-                            if fmt[0] == "%" and not state.seen(fmt[-1])
+                            if idx not in state.unconverted and idx not in state.pos
                         ), 0)
                         for group in remaining_groups
                     )
@@ -147,12 +160,14 @@ class DateParser(object):
                 partials.append(state.children(remaining_groups[0]))
                 continue
 
-            if best_quality is not None and quality < best_quality:
-                # We've seen better, so skip this one.
-                continue
-
             value = state.valid()
             if value is None:
+                continue
+
+            quality, locales, state = state.final_score()
+
+            if best_quality is not None and quality < best_quality:
+                # We've seen better, so skip this one.
                 continue
 
             if quality != best_quality:
@@ -202,7 +217,7 @@ class DateParser(object):
 
     @staticmethod
     def _optimistic_score(fmt, idx, value, locales, prefix, suffix):
-        return (fmt[0] == "%") + (prefix is not None) + (suffix is not None)
+        return 1 + (prefix is not None) + (suffix is not None)
 
 _DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
 
@@ -217,15 +232,11 @@ class _State(object):
         self.satisfied = Counter()
         self.globally_satisfied = 0
 
-    def seen(self, category):
-        if category == "b":
-            category = "m"
-        elif category == "z":
-            category = "Z"
-        return getattr(self.value, category) is not None
-
     def children(self, options):
         for fmt, fmt_pos, fmt_value, locales, prefix, suffix in options:
+            if fmt_pos in self.unconverted or fmt_pos in self.pos:
+                continue
+
             if not locales:
                 locales = self.required_locales
             else:
@@ -234,90 +245,76 @@ class _State(object):
                         continue
                     locales = locales.intersection(self.required_locales)
 
-            is_conversion = fmt[0] == "%"
+            category = fmt[-1]
+            if category == "b":
+                # Month-names should be treated like numeric months.
+                category = "m"
+            elif category == "z":
+                category = "Z"
 
-            pos = self.pos
-            value = self.value
-            fmts = self.fmts
-            exclude = (fmt_pos,)
-            pending_hints = self.pending_hints
-            if is_conversion:
-                if fmt_pos in self.unconverted:
-                    continue
+            if fmt_pos - 1 == self.pos.C and category != "y":
+                continue
 
-                category = fmt[-1]
-                if category == "b":
-                    # Month-names should be treated like numeric months.
-                    category = "m"
-                elif category == "z":
-                    category = "Z"
+            pos = self.pos._replace(**{category: fmt_pos})
 
-                if getattr(value, category) is not None:
-                    continue
-
-                if fmt_pos - 1 == self.pos.C and category != "y":
-                    continue
-
-                pos = self.pos._replace(**{category: fmt_pos})
-
-                exclude = None
-                if category in "md":
-                    if None not in (pos.m, pos.d):
-                        if pos.m < pos.d:
-                            exclude = range(pos.m + 1, pos.d)
-                        else:
-                            exclude = range(pos.d + 1, pos.m)
-                elif category in "Cy":
-                    if None not in (pos.C, pos.y):
-                        if pos.C + 1 != pos.y:
-                            continue
-                elif category in "HMS":
-                    if category != "S" and None not in (pos.H, pos.M):
-                        if pos.H > pos.M:
-                            continue
-                        exclude = range(pos.H + 1, pos.M)
-                    if category != "H" and None not in (pos.M, pos.S):
-                        if pos.M > pos.S:
-                            continue
-                        exclude = range(pos.M + 1, pos.S)
-
-                if exclude and any(p in exclude for p in pos):
-                    continue
-
-                value = self.value._replace(**{category: fmt_value})
-
-                if category in "Cymd":
-                    if None not in (value.m, value.d):
-                        # Compute an upper bound on month-length. Even if we
-                        # haven't identified all the fields needed for checking
-                        # leap-years yet, we can still prune if value.d is
-                        # bigger than the month can ever possibly be.
-                        if value.m == 2:
-                            month_length = 29
-                            if value.y is not None:
-                                if (value.y % 4) != 0:
-                                    month_length = 28
-                                elif value.y == 0 and value.C is not None and (value.C % 4) != 0:
-                                    month_length = 28
-                        else:
-                            # Odd-numbered months are longer through July, then
-                            # even-numbered months are longer for the rest of
-                            # the year.
-                            month_length = 30 + ((value.m % 2) == (value.m < 8))
-                        if value.d > month_length:
-                            continue
-                elif category in "Hp":
-                    if None not in (value.H, value.p) and not (1 <= value.H <= 12):
+            exclude = None
+            if category in "md":
+                if None not in (pos.m, pos.d):
+                    if pos.m < pos.d:
+                        exclude = range(pos.m + 1, pos.d)
+                    else:
+                        exclude = range(pos.d + 1, pos.m)
+            elif category in "Cy":
+                if None not in (pos.C, pos.y):
+                    if pos.C + 1 != pos.y:
                         continue
+            elif category in "HMS":
+                if category != "S" and None not in (pos.H, pos.M):
+                    if pos.H > pos.M:
+                        continue
+                    exclude = range(pos.H + 1, pos.M)
+                if category != "H" and None not in (pos.M, pos.S):
+                    if pos.M > pos.S:
+                        continue
+                    exclude = range(pos.M + 1, pos.S)
 
-                fmts = self.fmts._replace(**{category: fmt})
+            if exclude and any(p in exclude for p in pos):
+                continue
 
-                pending_hints = list(pending_hints)
-                pending_hints.append((None, ()))
-                if prefix is not None:
-                    pending_hints.append((fmt_pos - 1, prefix))
-                if suffix is not None:
-                    pending_hints.append((fmt_pos + 1, suffix))
+            value = self.value._replace(**{category: fmt_value})
+
+            if category in "Cymd":
+                if None not in (value.m, value.d):
+                    # Compute an upper bound on month-length. Even if we
+                    # haven't identified all the fields needed for checking
+                    # leap-years yet, we can still prune if value.d is
+                    # bigger than the month can ever possibly be.
+                    if value.m == 2:
+                        month_length = 29
+                        if value.y is not None:
+                            if (value.y % 4) != 0:
+                                month_length = 28
+                            elif value.y == 0 and value.C is not None and (value.C % 4) != 0:
+                                month_length = 28
+                    else:
+                        # Odd-numbered months are longer through July, then
+                        # even-numbered months are longer for the rest of
+                        # the year.
+                        month_length = 30 + ((value.m % 2) == (value.m < 8))
+                    if value.d > month_length:
+                        continue
+            elif category in "Hp":
+                if None not in (value.H, value.p) and not (1 <= value.H <= 12):
+                    continue
+
+            fmts = self.fmts._replace(**{category: fmt})
+
+            pending_hints = list(self.pending_hints)
+            pending_hints.append((None, ()))
+            if prefix is not None:
+                pending_hints.append((fmt_pos - 1, prefix))
+            if suffix is not None:
+                pending_hints.append((fmt_pos + 1, suffix))
 
             new = copy.copy(self)
             new.pos = pos
@@ -343,6 +340,21 @@ class _State(object):
                 new.pending_hints = tuple(deferred_hints)
 
             yield new.score()
+
+        # Also allow skipping this category entirely:
+        yield self.score()
+
+    def final_score(self):
+        new = self
+        if self.pending_hints:
+            new = copy.copy(self)
+            new.satisfied = new.satisfied.copy()
+            for idx, hint in self.pending_hints:
+                if hint:
+                    new.satisfied.update(hint)
+                else:
+                    new.globally_satisfied += 1
+        return new.score()
 
     def valid(self):
         seen = { k for k, v in self.value._asdict().items() if v is not None }
