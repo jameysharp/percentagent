@@ -89,12 +89,13 @@ class DateParser(object):
         suffixes = [dict(self.locale_set.suffixes.get(match, ())) for match in case[1:]] + [{}]
         keywords = [self._lookup_keyword(match) + ((match, (), None),) for match in raw]
         groups = []
-        for keyword, prefix, suffix in zip(keywords, prefixes, suffixes):
+        for idx, (keyword, prefix, suffix) in enumerate(zip(keywords, prefixes, suffixes)):
             if "y" in prefix:
                 prefix["C"] = tuple(set(prefix["y"] + prefix.get("C", ())))
             groups.append(sorted((
                 (
                     fmt,
+                    idx,
                     value,
                     locales,
                     prefix.get(fmt[-1]) if fmt[0] == "%" else None,
@@ -105,6 +106,8 @@ class DateParser(object):
 
         best_quality = None
         best_candidates = []
+
+        groups.sort(key=len)
 
         partials = [_State().children(groups[0])]
         while partials:
@@ -127,10 +130,10 @@ class DateParser(object):
                     # more precise we can be here, the fewer nodes we have to
                     # search, so we can spend some CPU time on precision and
                     # still come out ahead.
-                    heuristic = (state.unless_conversion is not None) + sum(
+                    heuristic = len(state.pending_hints) + sum(
                         next((
-                            self._optimistic_score(fmt, value, locales, prefix, suffix)
-                            for fmt, value, locales, prefix, suffix in group
+                            self._optimistic_score(fmt, idx, value, locales, prefix, suffix)
+                            for fmt, idx, value, locales, prefix, suffix in group
                             if fmt[0] == "%" and not state.seen(fmt[-1])
                         ), 0)
                         for group in remaining_groups
@@ -156,7 +159,10 @@ class DateParser(object):
                 best_quality = quality
                 best_candidates = []
 
-            pattern = ''.join(lit + fmt for lit, fmt in zip(literals, state.fmts + ('',))).replace("%C%y", "%Y")
+            conversions = dict(zip(state.pos, state.fmts))
+            fmts = [ conversions.get(idx) or literal for idx, literal in enumerate(raw) ]
+
+            pattern = ''.join(lit + fmt for lit, fmt in zip(literals, fmts + [''])).replace("%C%y", "%Y")
             best_candidates.append((pattern, value, locales))
         return best_candidates
 
@@ -195,21 +201,21 @@ class DateParser(object):
         return ((prefix + fmt, value, locales) for fmt in legal)
 
     @staticmethod
-    def _optimistic_score(fmt, value, locales, prefix, suffix):
+    def _optimistic_score(fmt, idx, value, locales, prefix, suffix):
         return (fmt[0] == "%") + (prefix is not None) + (suffix is not None)
 
 _DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
 
 class _State(object):
     def __init__(self):
-        self.fmts = ()
+        self.unconverted = frozenset()
+        self.pos = _DateTime(**dict.fromkeys(_DateTime._fields, None))
         self.value = _DateTime(**dict.fromkeys(_DateTime._fields, None))
-        self.previous_category = None
+        self.fmts = _DateTime(**dict.fromkeys(_DateTime._fields, None))
         self.required_locales = None
+        self.pending_hints = ()
         self.satisfied = Counter()
         self.globally_satisfied = 0
-        self.was_conversion = True
-        self.unless_conversion = None
 
     def seen(self, category):
         if category == "b":
@@ -219,7 +225,7 @@ class _State(object):
         return getattr(self.value, category) is not None
 
     def children(self, options):
-        for fmt, fmt_value, locales, prefix, suffix in options:
+        for fmt, fmt_pos, fmt_value, locales, prefix, suffix in options:
             if not locales:
                 locales = self.required_locales
             else:
@@ -230,9 +236,15 @@ class _State(object):
 
             is_conversion = fmt[0] == "%"
 
+            pos = self.pos
             value = self.value
-            category = self.previous_category
+            fmts = self.fmts
+            exclude = (fmt_pos,)
+            pending_hints = self.pending_hints
             if is_conversion:
+                if fmt_pos in self.unconverted:
+                    continue
+
                 category = fmt[-1]
                 if category == "b":
                     # Month-names should be treated like numeric months.
@@ -243,28 +255,34 @@ class _State(object):
                 if getattr(value, category) is not None:
                     continue
 
-                if self.previous_category == "C":
-                    if category != "y":
-                        continue
-                elif self.previous_category == "m":
-                    if value.d is None and category != "d":
-                        continue
-                elif self.previous_category == "d":
-                    if value.m is None and category != "m":
-                        continue
-                elif self.previous_category == "H":
-                    if category != "M":
-                        continue
+                if fmt_pos - 1 == self.pos.C and category != "y":
+                    continue
 
-                if category == "C":
-                    if value.y is not None:
-                        continue
-                elif category == "M":
-                    if self.previous_category != "H":
-                        continue
-                elif category == "S":
-                    if self.previous_category != "M":
-                        continue
+                pos = self.pos._replace(**{category: fmt_pos})
+
+                exclude = None
+                if category in "md":
+                    if None not in (pos.m, pos.d):
+                        if pos.m < pos.d:
+                            exclude = range(pos.m + 1, pos.d)
+                        else:
+                            exclude = range(pos.d + 1, pos.m)
+                elif category in "Cy":
+                    if None not in (pos.C, pos.y):
+                        if pos.C + 1 != pos.y:
+                            continue
+                elif category in "HMS":
+                    if category != "S" and None not in (pos.H, pos.M):
+                        if pos.H > pos.M:
+                            continue
+                        exclude = range(pos.H + 1, pos.M)
+                    if category != "H" and None not in (pos.M, pos.S):
+                        if pos.M > pos.S:
+                            continue
+                        exclude = range(pos.M + 1, pos.S)
+
+                if exclude and any(p in exclude for p in pos):
+                    continue
 
                 value = self.value._replace(**{category: fmt_value})
 
@@ -292,27 +310,38 @@ class _State(object):
                     if None not in (value.H, value.p) and not (1 <= value.H <= 12):
                         continue
 
+                fmts = self.fmts._replace(**{category: fmt})
+
+                pending_hints = list(pending_hints)
+                pending_hints.append((None, ()))
+                if prefix is not None:
+                    pending_hints.append((fmt_pos - 1, prefix))
+                if suffix is not None:
+                    pending_hints.append((fmt_pos + 1, suffix))
+
             new = copy.copy(self)
-            new.required_locales = locales
+            new.pos = pos
             new.value = value
-            new.previous_category = category
-            new.globally_satisfied += is_conversion
+            new.fmts = fmts
+            new.required_locales = locales
 
-            local_satisfied = (
-                None if is_conversion else self.unless_conversion,
-                None if self.was_conversion else prefix,
-            )
-            for hint in local_satisfied:
-                if hint:
-                    new.satisfied = self.satisfied.copy()
-                    new.satisfied.update(hint)
-                elif hint is not None:
-                    new.globally_satisfied += 1
+            if exclude:
+                new.unconverted = self.unconverted.union(exclude)
 
-            new.was_conversion = is_conversion
-            new.unless_conversion = suffix
+            if pending_hints:
+                deferred_hints = []
+                for idx, hint in pending_hints:
+                    if idx is None or idx in new.unconverted:
+                        if hint:
+                            new.satisfied = new.satisfied.copy()
+                            new.satisfied.update(hint)
+                        else:
+                            new.globally_satisfied += 1
+                    elif idx not in new.pos:
+                        # Save this hint until we decide this index.
+                        deferred_hints.append((idx, hint))
+                new.pending_hints = tuple(deferred_hints)
 
-            new.fmts = self.fmts + (fmt,)
             yield new.score()
 
     def valid(self):
