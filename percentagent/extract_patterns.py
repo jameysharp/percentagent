@@ -313,12 +313,21 @@ class TimeLocaleSet(object):
 
 if __name__ == "__main__":
     locale_set = TimeLocaleSet.default()
-    patterns = locale_set.keywords
 
-    for pattern, fmts in sorted(patterns.items()):
-        #if len(fmts) <= 1:
-        #    continue
+    for pattern, fmts in sorted(locale_set.keywords.items()):
+        print("{!r}:".format(pattern))
+        for fmt, value, locales in sorted(fmts):
+            print("- %{}={}: {}".format(fmt, value, ' '.join(sorted(locales))))
+        print()
+
+    for pattern, fmts in sorted(locale_set.prefixes.items()):
         print("{!r}:".format(pattern))
         for fmt, locales in sorted(fmts):
-            print("- {}: {}".format(fmt, ' '.join(sorted(locales))))
+            print("- # %{}: {}".format(fmt, ' '.join(sorted(locales))))
+        print()
+
+    for pattern, fmts in sorted(locale_set.suffixes.items()):
+        print("{!r}:".format(pattern))
+        for fmt, locales in sorted(fmts):
+            print("- %{} #: {}".format(fmt, ' '.join(sorted(locales))))
         print()
