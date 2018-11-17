@@ -11,8 +11,11 @@ class TimeShell(cmd.Cmd):
 
     def do_guess(self, arg):
         """Guess the format and locale for a date and/or time string."""
-        for fmt, locales in self.parser.parse(arg):
-            print("- {!r} ({})".format(fmt, ' '.join(sorted(locales or ["C"]))))
+        for fmt, value, locales in self.parser.parse(arg):
+            print("format: {!r}".format(fmt))
+            print("value: {}".format(value))
+            print("locales: {}".format(' '.join(sorted(locales or ["C"]))))
+            print()
 
     def do_exit(self, arg):
         """Exit the shell."""

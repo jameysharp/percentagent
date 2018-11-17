@@ -144,8 +144,7 @@ class TimeLocaleSet(object):
                 shortnames = [tz._tzname]
             for tzname in shortnames:
                 if tzname[0] not in "+-":
-                    # TODO: set conversion value to a set of tz.zone or something
-                    keywords[tzname.casefold()]["Z", ()] = frozenset()
+                    keywords[tzname.casefold()]["Z", tzname] = frozenset()
 
         self._keywords = {
             pattern: tuple(
@@ -243,7 +242,7 @@ class TimeLocaleSet(object):
         month.
 
         >>> sorted(glibc['awst'])
-        [('Z', (), ()), ('b', 8, ('cy_GB',))]
+        [('Z', 'AWST', ()), ('b', 8, ('cy_GB',))]
 
         Finally, in Chinese, Monday through Saturday are abbreviated using the
         numbers 1-6, and those numbers are written using the same characters in

@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
-from collections import Counter
+from collections import Counter, namedtuple
 import copy
+import datetime
 import itertools
 import re
 
@@ -40,8 +41,8 @@ class DateParser(object):
         For example:
 
         >>> parser = DateParser(TimeLocaleSet())
-        >>> parser.parse("2018-05-05")
-        [('%Y-%m-%d', None), ('%Y-%d-%m', None)]
+        >>> parser.parse("2018-01-09")
+        [('%Y-%m-%d', datetime.date(2018, 1, 9), None), ('%Y-%d-%m', datetime.date(2018, 9, 1), None)]
 
         That output indicates that the input can be explained by either
         year-month-day order or year-day-month order, and there are no hints
@@ -51,25 +52,25 @@ class DateParser(object):
         example is unambiguous:
 
         >>> parser.parse("2018-05-13")
-        [('%Y-%m-%d', None)]
+        [('%Y-%m-%d', datetime.date(2018, 5, 13), None)]
 
         Separators are not required between conversions, but they can help with
         ambiguity:
 
-        >>> sorted(fmt for fmt, locales in parser.parse("210456"))
+        >>> sorted(fmt for fmt, value, locales in parser.parse("210456"))
         ['%H%M%S', '%d%m%y']
         >>> parser.parse("21-04-56")
-        [('%d-%m-%y', None)]
+        [('%d-%m-%y', datetime.date(2056, 4, 21), None)]
         >>> parser.parse("21:04:56")
-        [('%H:%M:%S', None)]
+        [('%H:%M:%S', datetime.time(21, 4, 56), None)]
 
         Using locale-specific strings can help avoid ambiguity too:
 
         >>> parser = DateParser(TimeLocaleSet(
         ...     mon={"Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec": ["en_US"]},
         ... ))
-        >>> parser.parse("2018May05")
-        [('%Y%b%d', frozenset({'en_US'}))]
+        >>> parser.parse("2018Jan9")
+        [('%Y%b%d', datetime.date(2018, 1, 9), frozenset({'en_US'}))]
 
         :param str s: text which contains a date and/or time
         :return: possible format strings, and corresponding locales
@@ -86,7 +87,7 @@ class DateParser(object):
         case = list(map(str.casefold, raw))
         prefixes = [{}] + [dict(self.locale_set.prefixes.get(match, ())) for match in case[:-1]]
         suffixes = [dict(self.locale_set.suffixes.get(match, ())) for match in case[1:]] + [{}]
-        keywords = [self._lookup_keyword(match) + ((match, None),) for match in raw]
+        keywords = [self._lookup_keyword(match) + ((match, (), None),) for match in raw]
         groups = []
         for keyword, prefix, suffix in zip(keywords, prefixes, suffixes):
             if "y" in prefix:
@@ -94,11 +95,12 @@ class DateParser(object):
             groups.append(sorted((
                 (
                     fmt,
+                    value,
                     locales,
                     prefix.get(fmt[-1]) if fmt[0] == "%" else None,
                     suffix.get(fmt[-1]) if fmt[0] == "%" else None,
                 )
-                for fmt, locales in keyword
+                for fmt, value, locales in keyword
             ), key=lambda option: self._optimistic_score(*option), reverse=True))
 
         best_quality = None
@@ -127,9 +129,9 @@ class DateParser(object):
                     # still come out ahead.
                     heuristic = (state.unless_conversion is not None) + sum(
                         next((
-                            self._optimistic_score(fmt, locales, prefix, suffix)
-                            for fmt, locales, prefix, suffix in group
-                            if fmt[0] == "%" and fmt[-1] not in state.seen
+                            self._optimistic_score(fmt, value, locales, prefix, suffix)
+                            for fmt, value, locales, prefix, suffix in group
+                            if fmt[0] == "%" and not state.seen(fmt[-1])
                         ), 0)
                         for group in remaining_groups
                     )
@@ -146,7 +148,8 @@ class DateParser(object):
                 # We've seen better, so skip this one.
                 continue
 
-            if not state.valid():
+            value = state.valid()
+            if value is None:
                 continue
 
             if quality != best_quality:
@@ -154,7 +157,7 @@ class DateParser(object):
                 best_candidates = []
 
             pattern = ''.join(lit + fmt for lit, fmt in zip(literals, state.fmts + ('',))).replace("%C%y", "%Y")
-            best_candidates.append((pattern, locales))
+            best_candidates.append((pattern, value, locales))
         return best_candidates
 
     def _lookup_keyword(self, raw):
@@ -167,11 +170,11 @@ class DateParser(object):
                 if fmt == "O":
                     ret.extend(self._legal_number("%O", value, locales))
                 else:
-                    ret.append(("%" + fmt, locales))
+                    ret.append(("%" + fmt, value, locales))
             return tuple(ret)
         if keyword[0] in "+-":
             if keyword[1:].isdigit():
-                return (("%z", None),)
+                return (("%z", keyword, None),)
         elif keyword.isdigit():
             return tuple(self._legal_number("%", int(keyword), None))
         return ()
@@ -189,16 +192,18 @@ class DateParser(object):
                     legal.update("d")
                     if value <= 12:
                         legal.update("m")
-        return ((prefix + fmt, locales) for fmt in legal)
+        return ((prefix + fmt, value, locales) for fmt in legal)
 
     @staticmethod
-    def _optimistic_score(fmt, locales, prefix, suffix):
+    def _optimistic_score(fmt, value, locales, prefix, suffix):
         return (fmt[0] == "%") + (prefix is not None) + (suffix is not None)
+
+_DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
 
 class _State(object):
     def __init__(self):
         self.fmts = ()
-        self.seen = frozenset()
+        self.value = _DateTime(**dict.fromkeys(_DateTime._fields, None))
         self.previous_category = None
         self.required_locales = None
         self.satisfied = Counter()
@@ -206,8 +211,15 @@ class _State(object):
         self.was_conversion = True
         self.unless_conversion = None
 
+    def seen(self, category):
+        if category == "b":
+            category = "m"
+        elif category == "z":
+            category = "Z"
+        return getattr(self.value, category) is not None
+
     def children(self, options):
-        for fmt, locales, prefix, suffix in options:
+        for fmt, fmt_value, locales, prefix, suffix in options:
             if not locales:
                 locales = self.required_locales
             else:
@@ -218,32 +230,34 @@ class _State(object):
 
             is_conversion = fmt[0] == "%"
 
-            seen = self.seen
+            value = self.value
             category = self.previous_category
             if is_conversion:
                 category = fmt[-1]
                 if category == "b":
                     # Month-names should be treated like numeric months.
                     category = "m"
+                elif category == "z":
+                    category = "Z"
 
-                if category in self.seen:
+                if getattr(value, category) is not None:
                     continue
 
                 if self.previous_category == "C":
                     if category != "y":
                         continue
                 elif self.previous_category == "m":
-                    if "d" not in self.seen and category != "d":
+                    if value.d is None and category != "d":
                         continue
                 elif self.previous_category == "d":
-                    if "m" not in self.seen and category != "m":
+                    if value.m is None and category != "m":
                         continue
                 elif self.previous_category == "H":
                     if category != "M":
                         continue
 
                 if category == "C":
-                    if "y" in self.seen:
+                    if value.y is not None:
                         continue
                 elif category == "M":
                     if self.previous_category != "H":
@@ -252,12 +266,36 @@ class _State(object):
                     if self.previous_category != "M":
                         continue
 
-                seen = self.seen.union((category,))
+                value = self.value._replace(**{category: fmt_value})
+
+                if category in "Cymd":
+                    if None not in (value.m, value.d):
+                        # Compute an upper bound on month-length. Even if we
+                        # haven't identified all the fields needed for checking
+                        # leap-years yet, we can still prune if value.d is
+                        # bigger than the month can ever possibly be.
+                        if value.m == 2:
+                            month_length = 29
+                            if value.y is not None:
+                                if (value.y % 4) != 0:
+                                    month_length = 28
+                                elif value.y == 0 and value.C is not None and (value.C % 4) != 0:
+                                    month_length = 28
+                        else:
+                            # Odd-numbered months are longer through July, then
+                            # even-numbered months are longer for the rest of
+                            # the year.
+                            month_length = 30 + ((value.m % 2) == (value.m < 8))
+                        if value.d > month_length:
+                            continue
+                elif category in "Hp":
+                    if None not in (value.H, value.p) and not (1 <= value.H <= 12):
+                        continue
 
             new = copy.copy(self)
             new.required_locales = locales
+            new.value = value
             new.previous_category = category
-            new.seen = seen
             new.globally_satisfied += is_conversion
 
             local_satisfied = (
@@ -278,13 +316,55 @@ class _State(object):
             yield new.score()
 
     def valid(self):
-        if self.seen.intersection(self._all_date_formats) and not self.seen.issuperset(self._min_date_formats):
-            return False
+        seen = { k for k, v in self.value._asdict().items() if v is not None }
 
-        if self.seen.intersection(self._all_time_formats) and not self.seen.issuperset(self._min_time_formats):
-            return False
+        d = None
+        if seen.intersection(self._all_date_formats):
+            if not seen.issuperset(self._min_date_formats):
+                return None
 
-        return True
+            # TODO: disambiguate missing century around a configurable date
+            if self.value.C is not None:
+                centuries = (self.value.C,)
+            elif self.value.y == 0 and self.value.m == 2 and self.value.d == 29:
+                # Among years divisible by 100, only those that are also
+                # divisible by 400 are leap years. So 2000 is the only nearby
+                # year that could work in this case.
+                centuries = (20,)
+            elif self.value.a is not None:
+                # If we know the weekday, a two-digit year is unambiguous
+                # within a four-century window. Let's just guess in a window
+                # around the 20th/21st centuries.
+                centuries = (20, 19, 21, 18)
+            else:
+                # If all else fails, use the current POSIX rule for how
+                # strptime interprets two-digit years.
+                if self.value.y <= 68:
+                    centuries = (20,)
+                else:
+                    centuries = (19,)
+
+            for C in centuries:
+                d = datetime.date(C * 100 + self.value.y, self.value.m, self.value.d)
+                if self.value.a is None or (d.weekday() + 1) % 7 == self.value.a:
+                    break
+            else:
+                return None
+
+        t = None
+        if seen.intersection(self._all_time_formats):
+            if not seen.issuperset(self._min_time_formats):
+                return None
+            H = self.value.H
+            if self.value.p is not None:
+                # 12am is 00:00, and 12pm is 12:00
+                H = (H % 12) + 12 * self.value.p
+            t = datetime.time(H, self.value.M, self.value.S or 0)
+
+        if d and t:
+            return datetime.datetime.combine(d, t)
+
+        return d or t
 
     def score(self):
         satisfied_locales = self.required_locales
@@ -304,7 +384,7 @@ class _State(object):
     _min_date_formats = "ymd"
     _all_date_formats = _min_date_formats + "Ca"
     _min_time_formats = "HM"
-    _all_time_formats = _min_time_formats + "SpzZ"
+    _all_time_formats = _min_time_formats + "SpZ"
 
 if __name__ == "__main__":
     import time
@@ -321,8 +401,8 @@ if __name__ == "__main__":
     print("parser setup: {:.2f}ms".format(1000 * perf))
 
     examples = (
-        "5/5/2018, 4:45:18 AM",
-        "20180505T114518Z",
+        "5/6/2018, 4:45:18 AM",
+        "20180506T114518Z",
         "T nov   13 12:27:03 PST 2018",
         "Fri Nov  9 17:49:24 PST 2018",
         "Fra Nov  9 17:57:39 PST 2018",
@@ -343,8 +423,8 @@ if __name__ == "__main__":
     times = []
     for example in examples:
         print(repr(example))
-        for fmt, locales in parser.parse(example):
-            print("- {!r} ({})".format(fmt, ' '.join(sorted(locales or ["C"]))))
+        for fmt, value, locales in parser.parse(example):
+            print("- {!r} = {} ({})".format(fmt, value, ' '.join(sorted(locales or ["C"]))))
         timer = timeit.Timer('parser.parse(example)', timer=time.process_time, globals={'parser': parser, 'example': example})
         perf = min(timer.repeat(repeat=10, number=3)) / 3
         times.append(perf)
