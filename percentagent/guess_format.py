@@ -227,6 +227,8 @@ _DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
 
 class _State(object):
     def __init__(self):
+        self.date_present = None
+        self.time_present = None
         self.unconverted = frozenset()
         self.pos = _DateTime(**dict.fromkeys(_DateTime._fields, None))
         self.value = _DateTime(**dict.fromkeys(_DateTime._fields, None))
@@ -237,6 +239,23 @@ class _State(object):
         self.globally_satisfied = 0
 
     def children(self, category, options):
+        date_present = self.date_present
+        time_present = self.time_present
+        if category in self._all_date_formats:
+            if date_present is False:
+                # None of these options are valid because we've already skipped
+                # a mandatory date field.
+                options = ()
+            else:
+                date_present = True
+        else:
+            if time_present is False:
+                # None of these options are valid because we've already skipped
+                # a mandatory time field.
+                options = ()
+            else:
+                time_present = True
+
         for fmt, fmt_pos, fmt_value, locales, prefix, suffix in options:
             if fmt_pos in self.unconverted or fmt_pos in self.pos:
                 continue
@@ -314,6 +333,8 @@ class _State(object):
                 pending_hints.append((fmt_pos + 1, suffix))
 
             new = copy.copy(self)
+            new.date_present = date_present
+            new.time_present = time_present
             new.pos = pos
             new.value = value
             new.fmts = fmts
@@ -339,7 +360,29 @@ class _State(object):
             yield new.score()
 
         # Also allow skipping this category entirely:
-        yield self.score()
+        new = self
+        if category in self._min_date_formats:
+            if self.date_present is True:
+                # We already committed to a date field in this subtree, so we
+                # can't skip this mandatory one.
+                return
+            if self.date_present is None:
+                # Now that we're skipping a required date field, we can't pick
+                # any date fields in this subtree.
+                new = copy.copy(self)
+                new.date_present = False
+        elif category in self._min_time_formats:
+            if self.time_present is True:
+                # We already committed to a time field in this subtree, so we
+                # can't skip this mandatory one.
+                return
+            if self.time_present is None:
+                # Now that we're skipping a required time field, we can't pick
+                # any time fields in this subtree.
+                new = copy.copy(self)
+                new.time_present = False
+
+        yield new.score()
 
     def final_score(self):
         new = self
@@ -354,13 +397,8 @@ class _State(object):
         return new.score()
 
     def valid(self):
-        seen = { k for k, v in self.value._asdict().items() if v is not None }
-
         d = None
-        if seen.intersection(self._all_date_formats):
-            if not seen.issuperset(self._min_date_formats):
-                return None
-
+        if self.date_present:
             # TODO: disambiguate missing century around a configurable date
             if self.value.C is not None:
                 centuries = (self.value.C,)
@@ -390,9 +428,7 @@ class _State(object):
                 return None
 
         t = None
-        if seen.intersection(self._all_time_formats):
-            if not seen.issuperset(self._min_time_formats):
-                return None
+        if self.time_present:
             H = self.value.H
             if self.value.p is not None:
                 # 12am is 00:00, and 12pm is 12:00
