@@ -90,6 +90,7 @@ class DateParser(object):
         keywords = map(self._lookup_keyword, raw)
 
         groups = _DateTime(**{ field: [] for field in _DateTime._fields })
+        choices_per_position = {}
         always_literal = set()
         for idx, (keyword, prefix, suffix) in enumerate(zip(keywords, prefixes, suffixes)):
             if "y" in prefix:
@@ -97,6 +98,7 @@ class DateParser(object):
             if not keyword:
                 always_literal.add(idx)
             else:
+                choices_per_position[idx] = len(keyword)
                 for fmt, value, locales in keyword:
                     category = fmt[-1]
                     if category == "b":
@@ -114,7 +116,7 @@ class DateParser(object):
                     ))
 
         for group in groups:
-            group.sort(key=lambda option: self._optimistic_score(*option), reverse=True)
+            group.sort(key=lambda option: self._value_order(choices_per_position, *option))
 
         required_formats = _State._min_date_formats + _State._min_time_formats
         groups = sorted(
@@ -150,7 +152,7 @@ class DateParser(object):
                     # still come out ahead.
                     heuristic = len(state.pending_hints) + sum(
                         next((
-                            self._optimistic_score(fmt, idx, value, locales, prefix, suffix)
+                            self._optimistic_score(prefix, suffix)
                             for fmt, idx, value, locales, prefix, suffix in group
                             if idx not in state.unconverted and idx not in state.pos
                         ), 0)
@@ -220,8 +222,12 @@ class DateParser(object):
                         legal.update("m")
         return ((prefix + fmt, value, locales) for fmt in legal)
 
+    @classmethod
+    def _value_order(cls, choices_per_position, fmt, idx, value, locales, prefix, suffix):
+        return (-cls._optimistic_score(prefix, suffix), choices_per_position[idx])
+
     @staticmethod
-    def _optimistic_score(fmt, idx, value, locales, prefix, suffix):
+    def _optimistic_score(prefix, suffix):
         return 1 + (prefix is not None) + (suffix is not None)
 
 _DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
