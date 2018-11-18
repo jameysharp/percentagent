@@ -116,9 +116,10 @@ class DateParser(object):
         for group in groups:
             group.sort(key=lambda option: self._optimistic_score(*option), reverse=True)
 
+        required_formats = _State._min_date_formats + _State._min_time_formats
         groups = sorted(
             ((category, group) for category, group in zip(groups._fields, groups) if group),
-            key=lambda i: len(i[1])
+            key=lambda i: (i[0] not in required_formats, len(i[1]))
         )
 
         best_quality = None
