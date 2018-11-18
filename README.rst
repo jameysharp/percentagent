@@ -17,25 +17,31 @@ strings. However this implementation has several advantages:
 - Returns all ambiguous parses
 - Supports many languages and locales out of the box
 - Reports which locales could have produced the input
+- Additional locales or parsing hints can be provided by example
 
 You should use ``dateutil`` instead if you don't need any of those
 features, because this library also has some disadvantages (although
 these may get fixed over time):
 
 - No test suite yet, while ``dateutil`` is well-tested
-- Slow performance (huge optimizations are possible but not implemented)
+- This library takes a few milliseconds to parse one input, while
+  ``dateutil`` takes a few hundred microseconds
+- Timezone offsets and abbreviations are recognized but not yet reported
+  out of the library
 
 Format strings
 --------------
 
-This library returns :manpage:`strftime(3)`-style format strings, rather
-than actual parsed dates.
+This library returns :manpage:`strftime(3)`-style format strings, as
+well as the corresponding :py:class:`~datetime.datetime` object (or a
+:py:class:`~datetime.date` or :py:class:`~datetime.time` if that's all
+that could be found in the input) for each possible format string.
 
-You can use the format string to turn the input into a
-:py:class:`~datetime.datetime` object if you want, but you can also
-compare format strings generated from different inputs if you have
-reason to believe they were all generated using the same format and
-you're trying to figure out which one it was.
+The format strings are useful if you have several different examples of
+strings produced by a single, unknown, format string. A single date/time
+string may be ambiguous (such as "y/m/d" versus "y/d/m"). But odds are
+good that if you see a few more samples in the same format, only one
+format string will explain all of them.
 
 Ambiguous inputs
 ----------------
@@ -63,10 +69,11 @@ glibc doesn't, we can merge the extracted data to make this library
 support even more kinds of input.
 
 This library will also tell you which locales could have been used to
-produce the input you hand it. That's important when trying to parse a
-date according to the returned format string, but it also gives you an
-additional data point if you're comparing different date strings to
-determine if they were generated using the same format.
+produce the input you hand it. That gives you an additional data point
+if you're comparing different date strings to determine if they were
+generated using the same format. You could also use the suggested
+locales as a hint about the language of the surrounding text, or the
+most likely timezones used in the locale's primary country.
 
 Command-line usage
 ==================
