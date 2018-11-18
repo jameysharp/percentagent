@@ -285,14 +285,15 @@ class _State(object):
                     if pos.C + 1 != pos.y:
                         continue
             elif category in "HMS":
+                exclude = set()
                 if category != "S" and None not in (pos.H, pos.M):
                     if pos.H > pos.M:
                         continue
-                    exclude = range(pos.H + 1, pos.M)
+                    exclude.update(range(pos.H + 1, pos.M))
                 if category != "H" and None not in (pos.M, pos.S):
                     if pos.M > pos.S:
                         continue
-                    exclude = range(pos.M + 1, pos.S)
+                    exclude.update(range(pos.M + 1, pos.S))
 
             if exclude and any(p in exclude for p in pos):
                 continue
