@@ -100,6 +100,7 @@ class DateParser(object):
                 for fmt, value, locales in keyword:
                     category = fmt[-1]
                     if category == "b":
+                        # Month-names should be treated like numeric months.
                         category = "m"
                     elif category == "z":
                         category = "Z"
@@ -115,14 +116,17 @@ class DateParser(object):
         for group in groups:
             group.sort(key=lambda option: self._optimistic_score(*option), reverse=True)
 
-        groups = sorted(filter(None, groups), key=len)
+        groups = sorted(
+            ((category, group) for category, group in zip(groups._fields, groups) if group),
+            key=lambda i: len(i[1])
+        )
 
         best_quality = None
         best_candidates = []
 
         root = _State()
         root.unconverted = frozenset(always_literal)
-        partials = [root.children(groups[0])]
+        partials = [root.children(*groups[0])]
         while partials:
             try:
                 quality, locales, state = next(partials[-1])
@@ -149,7 +153,7 @@ class DateParser(object):
                             for fmt, idx, value, locales, prefix, suffix in group
                             if idx not in state.unconverted and idx not in state.pos
                         ), 0)
-                        for group in remaining_groups
+                        for category, group in remaining_groups
                     )
 
                     if quality + heuristic < best_quality:
@@ -157,7 +161,7 @@ class DateParser(object):
                         # possible score, this state is still not good enough.
                         continue
 
-                partials.append(state.children(remaining_groups[0]))
+                partials.append(state.children(*remaining_groups[0]))
                 continue
 
             value = state.valid()
@@ -232,7 +236,7 @@ class _State(object):
         self.satisfied = Counter()
         self.globally_satisfied = 0
 
-    def children(self, options):
+    def children(self, category, options):
         for fmt, fmt_pos, fmt_value, locales, prefix, suffix in options:
             if fmt_pos in self.unconverted or fmt_pos in self.pos:
                 continue
@@ -244,13 +248,6 @@ class _State(object):
                     if locales.isdisjoint(self.required_locales):
                         continue
                     locales = locales.intersection(self.required_locales)
-
-            category = fmt[-1]
-            if category == "b":
-                # Month-names should be treated like numeric months.
-                category = "m"
-            elif category == "z":
-                category = "Z"
 
             if fmt_pos - 1 == self.pos.C and category != "y":
                 continue
