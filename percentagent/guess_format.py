@@ -230,6 +230,59 @@ class DateParser(object):
     def _optimistic_score(prefix, suffix):
         return 1 + (prefix is not None) + (suffix is not None)
 
+_position_constraints = []
+
+def month_near_day(pos):
+    if pos.m < pos.d:
+        return range(pos.m + 1, pos.d)
+    else:
+        return range(pos.d + 1, pos.m)
+_position_constraints.append((month_near_day, "md"))
+
+def century_then_year(pos):
+    if pos.C + 1 != pos.y:
+        return None
+    return ()
+_position_constraints.append((century_then_year, "Cy"))
+
+def hour_then_minute(pos):
+    if pos.H > pos.M:
+        return None
+    return range(pos.H + 1, pos.M)
+_position_constraints.append((hour_then_minute, "HM"))
+
+def minute_then_second(pos):
+    if pos.M > pos.S:
+        return None
+    return range(pos.M + 1, pos.S)
+_position_constraints.append((minute_then_second, "MS"))
+
+_value_constraints = []
+
+def valid_day_of_month(value):
+    """
+    Compute an upper bound on month-length. Even if we haven't identified all
+    the fields needed for checking leap-years yet, we can still prune if
+    value.d is bigger than the month can ever possibly be.
+    """
+    if value.m == 2:
+        month_length = 29
+        if value.y is not None:
+            if (value.y % 4) != 0:
+                month_length = 28
+            elif value.y == 0 and value.C is not None and (value.C % 4) != 0:
+                month_length = 28
+    else:
+        # Odd-numbered months are longer through July, then even-numbered
+        # months are longer for the rest of the year.
+        month_length = 30 + ((value.m % 2) == (value.m < 8))
+    return value.d <= month_length
+_value_constraints.append((valid_day_of_month, "md", "Cy"))
+
+def valid_12_hour_clock(value):
+    return 1 <= value.H <= 12
+_value_constraints.append((valid_12_hour_clock, "Hp", ""))
+
 _DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
 
 class _State(object):
@@ -263,6 +316,26 @@ class _State(object):
             else:
                 time_present = True
 
+        position_constraints = [
+            f
+            for f, required in _position_constraints
+            if category in required
+            if all(
+                (c == category) == (getattr(self.pos, c) is None)
+                for c in required
+            )
+        ]
+
+        value_constraints = [
+            f
+            for f, required, revisit in _value_constraints
+            if category in required or category in revisit
+            if all(
+                (c == category) == (getattr(self.pos, c) is None)
+                for c in required
+            )
+        ]
+
         for fmt, fmt_pos, fmt_value, locales, prefix, suffix in options:
             if fmt_pos in self.unconverted or fmt_pos in self.pos:
                 continue
@@ -279,57 +352,19 @@ class _State(object):
                 continue
 
             pos = self.pos._replace(**{category: fmt_pos})
-
-            exclude = None
-            if category in "md":
-                if None not in (pos.m, pos.d):
-                    if pos.m < pos.d:
-                        exclude = range(pos.m + 1, pos.d)
-                    else:
-                        exclude = range(pos.d + 1, pos.m)
-            elif category in "Cy":
-                if None not in (pos.C, pos.y):
-                    if pos.C + 1 != pos.y:
-                        continue
-            elif category in "HMS":
-                exclude = set()
-                if category != "S" and None not in (pos.H, pos.M):
-                    if pos.H > pos.M:
-                        continue
-                    exclude.update(range(pos.H + 1, pos.M))
-                if category != "H" and None not in (pos.M, pos.S):
-                    if pos.M > pos.S:
-                        continue
-                    exclude.update(range(pos.M + 1, pos.S))
-
-            if exclude and any(p in exclude for p in pos):
-                continue
+            if position_constraints:
+                exclude = [constraint(pos) for constraint in position_constraints]
+                if None in exclude:
+                    continue
+                exclude = frozenset(itertools.chain.from_iterable(exclude))
+                if not exclude.isdisjoint(pos):
+                    continue
+            else:
+                exclude = ()
 
             value = self.value._replace(**{category: fmt_value})
-
-            if category in "Cymd":
-                if None not in (value.m, value.d):
-                    # Compute an upper bound on month-length. Even if we
-                    # haven't identified all the fields needed for checking
-                    # leap-years yet, we can still prune if value.d is
-                    # bigger than the month can ever possibly be.
-                    if value.m == 2:
-                        month_length = 29
-                        if value.y is not None:
-                            if (value.y % 4) != 0:
-                                month_length = 28
-                            elif value.y == 0 and value.C is not None and (value.C % 4) != 0:
-                                month_length = 28
-                    else:
-                        # Odd-numbered months are longer through July, then
-                        # even-numbered months are longer for the rest of
-                        # the year.
-                        month_length = 30 + ((value.m % 2) == (value.m < 8))
-                    if value.d > month_length:
-                        continue
-            elif category in "Hp":
-                if None not in (value.H, value.p) and not (1 <= value.H <= 12):
-                    continue
+            if not all(constraint(value) for constraint in value_constraints):
+                continue
 
             fmts = self.fmts._replace(**{category: fmt})
 
