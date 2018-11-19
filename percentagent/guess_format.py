@@ -471,16 +471,18 @@ class _State(object):
 if __name__ == "__main__":
     import time
     import timeit
+    def perf(f, repeat, number):
+        #return ()
+        timer = timeit.Timer('f()', timer=time.process_time, globals={'f': f})
+        perf = min(timer.repeat(repeat=repeat, number=number)) / number
+        print("{:.2f}ms".format(1000 * perf))
+        return [perf]
 
     locale_set = TimeLocaleSet.default()
-    timer = timeit.Timer('TimeLocaleSet.default()', timer=time.process_time, globals={'TimeLocaleSet': TimeLocaleSet})
-    perf = min(timer.repeat(repeat=5, number=1))
-    print("locale setup: {:.2f}ms".format(1000 * perf))
+    perf(TimeLocaleSet.default, 5, 1)
 
     parser = DateParser(locale_set)
-    timer = timeit.Timer('DateParser(locale_set)', timer=time.process_time, globals={'DateParser': DateParser, 'locale_set': locale_set})
-    perf = min(timer.repeat(repeat=5, number=1))
-    print("parser setup: {:.2f}ms".format(1000 * perf))
+    perf(lambda: DateParser(locale_set), 5, 1)
 
     examples = (
         "5/6/2018, 4:45:18 AM",
@@ -507,10 +509,7 @@ if __name__ == "__main__":
         print(repr(example))
         for fmt, value, locales in parser.parse(example):
             print("- {!r} = {} ({})".format(fmt, value, ' '.join(sorted(locales or ["C"]))))
-        timer = timeit.Timer('parser.parse(example)', timer=time.process_time, globals={'parser': parser, 'example': example})
-        perf = min(timer.repeat(repeat=10, number=3)) / 3
-        times.append(perf)
-        print("{:.2f}ms".format(1000 * perf))
+        times.extend(perf(lambda: parser.parse(example), 10, 3))
         print()
 
     times.sort()
