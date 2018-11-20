@@ -309,19 +309,9 @@ class _State(namedtuple("_State", (
         date_present = self.date_present
         time_present = self.time_present
         if category in self._all_date_formats:
-            if date_present is False:
-                # None of these options are valid because we've already skipped
-                # a mandatory date field.
-                options = ()
-            else:
-                date_present = True
+            date_present = True
         else:
-            if time_present is False:
-                # None of these options are valid because we've already skipped
-                # a mandatory time field.
-                options = ()
-            else:
-                time_present = True
+            time_present = True
 
         position_constraints = [
             f
@@ -417,30 +407,32 @@ class _State(namedtuple("_State", (
             yield new.score()
 
         # Also allow skipping this category entirely:
-        date_present = self.date_present
-        time_present = self.time_present
         if category in self._min_date_formats:
-            if date_present is True:
+            if self.date_present:
                 # We already committed to a date field in this subtree, so we
                 # can't skip this mandatory one.
                 return
             # Now that we're skipping a required date field, we can't pick
             # any date fields in this subtree.
-            date_present = False
+            remaining_groups = tuple(
+                group
+                for group in remaining_groups
+                if group[0] not in self._all_date_formats
+            )
         elif category in self._min_time_formats:
-            if time_present is True:
+            if self.time_present:
                 # We already committed to a time field in this subtree, so we
                 # can't skip this mandatory one.
                 return
             # Now that we're skipping a required time field, we can't pick
             # any time fields in this subtree.
-            time_present = False
+            remaining_groups = tuple(
+                group
+                for group in remaining_groups
+                if group[0] not in self._all_time_formats
+            )
 
-        new = self._replace(
-            remaining_groups=remaining_groups,
-            date_present=date_present,
-            time_present=time_present,
-        )
+        new = self._replace(remaining_groups=remaining_groups)
         yield new.score()
 
     def final_score(self):
@@ -522,8 +514,8 @@ class _State(namedtuple("_State", (
 
 _State.empty = _State(
     remaining_groups=(),
-    date_present=None,
-    time_present=None,
+    date_present=False,
+    time_present=False,
     unconverted=frozenset(),
     pos=_DateTime.empty,
     value=_DateTime.empty,
