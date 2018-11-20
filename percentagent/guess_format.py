@@ -7,6 +7,15 @@ import re
 
 from percentagent.extract_patterns import TimeLocaleSet
 
+_Assignment = namedtuple("_Assignment", (
+    "pos",
+    "value",
+    "fmt",
+    "locales",
+    "prefix",
+    "suffix",
+))
+
 class DateParser(object):
     """
     Infer :manpage:`strftime(3)`-style format strings that could have produced
@@ -105,17 +114,20 @@ class DateParser(object):
                         category = "m"
                     elif category == "z":
                         category = "Z"
-                    getattr(groups, category).append((
-                        fmt,
-                        idx,
-                        value,
-                        locales,
-                        prefix.get(fmt[-1]),
-                        suffix.get(fmt[-1]),
+                    getattr(groups, category).append(_Assignment(
+                        fmt=fmt,
+                        pos=idx,
+                        value=value,
+                        locales=locales,
+                        prefix=prefix.get(fmt[-1]),
+                        suffix=suffix.get(fmt[-1]),
                     ))
 
         for group in groups:
-            group.sort(key=lambda option: self._value_order(choices_per_position, *option))
+            group.sort(key=lambda assignment: (
+                -self._optimistic_score(assignment),
+                choices_per_position[assignment.pos],
+            ))
 
         required_formats = _State._min_date_formats + _State._min_time_formats
         groups = sorted(
@@ -153,9 +165,9 @@ class DateParser(object):
                 assigned = state.unconverted.union(state.pos).difference((None,))
                 heuristic = len(state.pending_hints) + sum(
                     next((
-                        self._optimistic_score(prefix, suffix)
-                        for fmt, idx, value, locales, prefix, suffix in group
-                        if idx not in assigned
+                        self._optimistic_score(assignment)
+                        for assignment in group
+                        if assignment.pos not in assigned
                     ), 0)
                     for category, group in state.remaining_groups
                 )
@@ -223,13 +235,9 @@ class DateParser(object):
                         legal.update("m")
         return ((prefix + fmt, value, locales) for fmt in legal)
 
-    @classmethod
-    def _value_order(cls, choices_per_position, fmt, idx, value, locales, prefix, suffix):
-        return (-cls._optimistic_score(prefix, suffix), choices_per_position[idx])
-
     @staticmethod
-    def _optimistic_score(prefix, suffix):
-        return 1 + (prefix is not None) + (suffix is not None)
+    def _optimistic_score(assignment):
+        return 1 + (assignment.prefix is not None) + (assignment.suffix is not None)
 
 _position_constraints = []
 
@@ -333,21 +341,21 @@ class _State(namedtuple("_State", (
             )
         ]
 
-        for fmt, fmt_pos, fmt_value, locales, prefix, suffix in options:
-            if fmt_pos in self.unconverted or fmt_pos in self.pos:
+        for assignment in options:
+            if assignment.pos in self.unconverted or assignment.pos in self.pos:
                 continue
 
-            if not locales:
-                locales = self.required_locales
-            elif self.required_locales:
-                locales = locales.intersection(self.required_locales)
+            if assignment.locales and self.required_locales:
+                locales = assignment.locales.intersection(self.required_locales)
                 if not locales:
                     continue
+            else:
+                locales = assignment.locales or self.required_locales
 
-            if fmt_pos - 1 == self.pos.C and category != "y":
+            if assignment.pos - 1 == self.pos.C and category != "y":
                 continue
 
-            pos = self.pos._replace(**{category: fmt_pos})
+            pos = self.pos._replace(**{category: assignment.pos})
             if position_constraints:
                 exclude = [constraint(pos) for constraint in position_constraints]
                 if None in exclude:
@@ -358,18 +366,18 @@ class _State(namedtuple("_State", (
             else:
                 exclude = ()
 
-            value = self.value._replace(**{category: fmt_value})
+            value = self.value._replace(**{category: assignment.value})
             if not all(constraint(value) for constraint in value_constraints):
                 continue
 
-            fmts = self.fmts._replace(**{category: fmt})
+            fmts = self.fmts._replace(**{category: assignment.fmt})
 
             pending_hints = list(self.pending_hints)
             pending_hints.append((None, ()))
-            if prefix is not None:
-                pending_hints.append((fmt_pos - 1, prefix))
-            if suffix is not None:
-                pending_hints.append((fmt_pos + 1, suffix))
+            if assignment.prefix is not None:
+                pending_hints.append((assignment.pos - 1, assignment.prefix))
+            if assignment.suffix is not None:
+                pending_hints.append((assignment.pos + 1, assignment.suffix))
 
             if exclude:
                 exclude = self.unconverted.union(exclude)
