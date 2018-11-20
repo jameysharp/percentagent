@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 from collections import Counter, namedtuple
-import copy
 import datetime
 import itertools
 import re
@@ -127,9 +126,7 @@ class DateParser(object):
         best_quality = 0
         best_candidates = []
 
-        root = _State()
-        root.unconverted = frozenset(always_literal)
-        partials = [root.children(*groups[0])]
+        partials = [_State.empty._replace(unconverted=frozenset(always_literal)).children(*groups[0])]
         while partials:
             try:
                 quality, locales, state = next(partials[-1])
@@ -284,19 +281,21 @@ def valid_12_hour_clock(value):
 _value_constraints.append((valid_12_hour_clock, "Hp", ""))
 
 _DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
+_DateTime.empty = _DateTime(**dict.fromkeys(_DateTime._fields, None))
 
-class _State(object):
-    def __init__(self):
-        self.date_present = None
-        self.time_present = None
-        self.unconverted = frozenset()
-        self.pos = _DateTime(**dict.fromkeys(_DateTime._fields, None))
-        self.value = _DateTime(**dict.fromkeys(_DateTime._fields, None))
-        self.fmts = _DateTime(**dict.fromkeys(_DateTime._fields, None))
-        self.required_locales = None
-        self.pending_hints = ()
-        self.satisfied = Counter()
-        self.globally_satisfied = 0
+class _State(namedtuple("_State", (
+        "date_present",
+        "time_present",
+        "unconverted",
+        "pos",
+        "value",
+        "fmts",
+        "required_locales",
+        "pending_hints",
+        "satisfied",
+        "globally_satisfied",
+    ))):
+    __slots__ = ()
 
     def children(self, category, options):
         date_present = self.date_present
@@ -375,30 +374,37 @@ class _State(object):
             if suffix is not None:
                 pending_hints.append((fmt_pos + 1, suffix))
 
-            new = copy.copy(self)
-            new.date_present = date_present
-            new.time_present = time_present
-            new.pos = pos
-            new.value = value
-            new.fmts = fmts
-            new.required_locales = locales
-
             if exclude:
-                new.unconverted = self.unconverted.union(exclude)
+                exclude = self.unconverted.union(exclude)
+            else:
+                exclude = self.unconverted
 
-            if pending_hints:
-                deferred_hints = []
-                for idx, hint in pending_hints:
-                    if idx is None or idx in new.unconverted:
-                        if hint:
-                            new.satisfied = new.satisfied.copy()
-                            new.satisfied.update(hint)
-                        else:
-                            new.globally_satisfied += 1
-                    elif idx not in new.pos:
-                        # Save this hint until we decide this index.
-                        deferred_hints.append((idx, hint))
-                new.pending_hints = tuple(deferred_hints)
+            satisfied = self.satisfied
+            globally_satisfied = self.globally_satisfied
+            deferred_hints = []
+            for idx, hint in pending_hints:
+                if idx is None or idx in exclude:
+                    if hint:
+                        satisfied = satisfied.copy()
+                        satisfied.update(hint)
+                    else:
+                        globally_satisfied += 1
+                elif idx not in pos:
+                    # Save this hint until we decide this index.
+                    deferred_hints.append((idx, hint))
+
+            new = _State(
+                date_present=date_present,
+                time_present=time_present,
+                unconverted=exclude,
+                pos=pos,
+                value=value,
+                fmts=fmts,
+                required_locales=locales,
+                pending_hints=tuple(deferred_hints),
+                satisfied=satisfied,
+                globally_satisfied=globally_satisfied,
+            )
 
             yield new.score()
 
@@ -412,8 +418,7 @@ class _State(object):
             if self.date_present is None:
                 # Now that we're skipping a required date field, we can't pick
                 # any date fields in this subtree.
-                new = copy.copy(self)
-                new.date_present = False
+                new = self._replace(date_present=False)
         elif category in self._min_time_formats:
             if self.time_present is True:
                 # We already committed to a time field in this subtree, so we
@@ -422,21 +427,21 @@ class _State(object):
             if self.time_present is None:
                 # Now that we're skipping a required time field, we can't pick
                 # any time fields in this subtree.
-                new = copy.copy(self)
-                new.time_present = False
+                new = self._replace(time_present=False)
 
         yield new.score()
 
     def final_score(self):
         new = self
         if self.pending_hints:
-            new = copy.copy(self)
-            new.satisfied = new.satisfied.copy()
+            satisfied = self.satisfied.copy()
+            globally_satisfied = self.globally_satisfied
             for idx, hint in self.pending_hints:
                 if hint:
-                    new.satisfied.update(hint)
+                    satisfied.update(hint)
                 else:
-                    new.globally_satisfied += 1
+                    globally_satisfied += 1
+            new = self._replace(satisfied=satisfied, globally_satisfied=globally_satisfied)
         return new.score()
 
     def valid(self):
@@ -502,6 +507,19 @@ class _State(object):
     _all_date_formats = _min_date_formats + "Ca"
     _min_time_formats = "HM"
     _all_time_formats = _min_time_formats + "SpZ"
+
+_State.empty = _State(
+    date_present=None,
+    time_present=None,
+    unconverted=frozenset(),
+    pos=_DateTime.empty,
+    value=_DateTime.empty,
+    fmts=_DateTime.empty,
+    required_locales=None,
+    pending_hints=(),
+    satisfied=Counter(),
+    globally_satisfied=0,
+)
 
 if __name__ == "__main__":
     import time
