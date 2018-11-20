@@ -124,7 +124,7 @@ class DateParser(object):
             key=lambda i: (i[0] not in required_formats, len(i[1]))
         )
 
-        best_quality = None
+        best_quality = 0
         best_candidates = []
 
         root = _State()
@@ -139,30 +139,30 @@ class DateParser(object):
 
             remaining_groups = groups[len(partials):]
             if remaining_groups:
-                if best_quality is not None:
-                    # Admissable heuristic: compute the best score each group
-                    # could possibly achieve. Don't count conversion specifiers
-                    # that we've already used, but don't worry about conflicts
-                    # in the groups we haven't assigned yet. Any such conflicts
-                    # can only reduce the resulting score, and we only need to
-                    # make sure that the heuristic is at least as large as the
-                    # true value of the best leaf in this subtree. However, the
-                    # more precise we can be here, the fewer nodes we have to
-                    # search, so we can spend some CPU time on precision and
-                    # still come out ahead.
-                    heuristic = len(state.pending_hints) + sum(
-                        next((
-                            self._optimistic_score(prefix, suffix)
-                            for fmt, idx, value, locales, prefix, suffix in group
-                            if idx not in state.unconverted and idx not in state.pos
-                        ), 0)
-                        for category, group in remaining_groups
-                    )
+                # Admissable heuristic: compute the best score each group
+                # could possibly achieve. Don't count conversion specifiers
+                # that we've already used, but don't worry about conflicts
+                # in the groups we haven't assigned yet. Any such conflicts
+                # can only reduce the resulting score, and we only need to
+                # make sure that the heuristic is at least as large as the
+                # true value of the best leaf in this subtree. However, the
+                # more precise we can be here, the fewer nodes we have to
+                # search, so we can spend some CPU time on precision and
+                # still come out ahead.
+                assigned = state.unconverted.union(state.pos).difference((None,))
+                heuristic = len(state.pending_hints) + sum(
+                    next((
+                        self._optimistic_score(prefix, suffix)
+                        for fmt, idx, value, locales, prefix, suffix in group
+                        if idx not in assigned
+                    ), 0)
+                    for category, group in remaining_groups
+                )
 
-                    if quality + heuristic < best_quality:
-                        # Even assuming the remaining groups get the highest
-                        # possible score, this state is still not good enough.
-                        continue
+                if quality + heuristic < best_quality:
+                    # Even assuming the remaining groups get the highest
+                    # possible score, this state is still not good enough.
+                    continue
 
                 partials.append(state.children(*remaining_groups[0]))
                 continue
