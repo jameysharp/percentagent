@@ -126,7 +126,12 @@ class DateParser(object):
         best_quality = 0
         best_candidates = []
 
-        partials = [_State.empty._replace(unconverted=frozenset(always_literal)).children(*groups[0])]
+        partials = [
+            _State.empty._replace(
+                unconverted=frozenset(always_literal),
+                remaining_groups=tuple(groups),
+            ).children()
+        ]
         while partials:
             try:
                 quality, locales, state = next(partials[-1])
@@ -134,8 +139,7 @@ class DateParser(object):
                 partials.pop()
                 continue
 
-            remaining_groups = groups[len(partials):]
-            if remaining_groups:
+            if state.remaining_groups:
                 # Admissable heuristic: compute the best score each group
                 # could possibly achieve. Don't count conversion specifiers
                 # that we've already used, but don't worry about conflicts
@@ -153,7 +157,7 @@ class DateParser(object):
                         for fmt, idx, value, locales, prefix, suffix in group
                         if idx not in assigned
                     ), 0)
-                    for category, group in remaining_groups
+                    for category, group in state.remaining_groups
                 )
 
                 if quality + heuristic < best_quality:
@@ -161,7 +165,7 @@ class DateParser(object):
                     # possible score, this state is still not good enough.
                     continue
 
-                partials.append(state.children(*remaining_groups[0]))
+                partials.append(state.children())
                 continue
 
             value = state.valid()
@@ -284,6 +288,7 @@ _DateTime = namedtuple("_DateTime", list("CymdaHMSpZ"))
 _DateTime.empty = _DateTime(**dict.fromkeys(_DateTime._fields, None))
 
 class _State(namedtuple("_State", (
+        "remaining_groups",
         "date_present",
         "time_present",
         "unconverted",
@@ -297,7 +302,10 @@ class _State(namedtuple("_State", (
     ))):
     __slots__ = ()
 
-    def children(self, category, options):
+    def children(self):
+        category, options = self.remaining_groups[0]
+        remaining_groups = self.remaining_groups[1:]
+
         date_present = self.date_present
         time_present = self.time_present
         if category in self._all_date_formats:
@@ -394,6 +402,7 @@ class _State(namedtuple("_State", (
                     deferred_hints.append((idx, hint))
 
             new = _State(
+                remaining_groups=remaining_groups,
                 date_present=date_present,
                 time_present=time_present,
                 unconverted=exclude,
@@ -409,26 +418,30 @@ class _State(namedtuple("_State", (
             yield new.score()
 
         # Also allow skipping this category entirely:
-        new = self
+        date_present = self.date_present
+        time_present = self.time_present
         if category in self._min_date_formats:
-            if self.date_present is True:
+            if date_present is True:
                 # We already committed to a date field in this subtree, so we
                 # can't skip this mandatory one.
                 return
-            if self.date_present is None:
-                # Now that we're skipping a required date field, we can't pick
-                # any date fields in this subtree.
-                new = self._replace(date_present=False)
+            # Now that we're skipping a required date field, we can't pick
+            # any date fields in this subtree.
+            date_present = False
         elif category in self._min_time_formats:
-            if self.time_present is True:
+            if time_present is True:
                 # We already committed to a time field in this subtree, so we
                 # can't skip this mandatory one.
                 return
-            if self.time_present is None:
-                # Now that we're skipping a required time field, we can't pick
-                # any time fields in this subtree.
-                new = self._replace(time_present=False)
+            # Now that we're skipping a required time field, we can't pick
+            # any time fields in this subtree.
+            time_present = False
 
+        new = self._replace(
+            remaining_groups=remaining_groups,
+            date_present=date_present,
+            time_present=time_present,
+        )
         yield new.score()
 
     def final_score(self):
@@ -509,6 +522,7 @@ class _State(namedtuple("_State", (
     _all_time_formats = _min_time_formats + "SpZ"
 
 _State.empty = _State(
+    remaining_groups=(),
     date_present=None,
     time_present=None,
     unconverted=frozenset(),
