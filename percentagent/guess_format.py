@@ -123,6 +123,16 @@ class DateParser(object):
                         suffix=suffix.get(fmt[-1]),
                     ))
 
+        # If a required date field is unsatisfiable, this is not a date.
+        if not all(getattr(groups, category) for category in _State._min_date_formats):
+            for category in _State._all_date_formats:
+                getattr(groups, category).clear()
+
+        # If a required time field is unsatisfiable, this is not a time.
+        if not all(getattr(groups, category) for category in _State._min_time_formats):
+            for category in _State._all_time_formats:
+                getattr(groups, category).clear()
+
         for group in groups:
             group.sort(key=lambda assignment: (
                 -self._optimistic_score(assignment),
@@ -134,6 +144,10 @@ class DateParser(object):
             ((category, group) for category, group in zip(groups._fields, groups) if group),
             key=lambda i: (i[0] not in required_formats, len(i[1]))
         )
+
+        # We've already filtered out all possibilities; there's nothing here.
+        if not groups:
+            return []
 
         best_quality = 0
         best_candidates = []
