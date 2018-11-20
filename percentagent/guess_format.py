@@ -349,11 +349,10 @@ class _State(namedtuple("_State", (
 
             if not locales:
                 locales = self.required_locales
-            else:
-                if self.required_locales:
-                    if locales.isdisjoint(self.required_locales):
-                        continue
-                    locales = locales.intersection(self.required_locales)
+            elif self.required_locales:
+                locales = locales.intersection(self.required_locales)
+                if not locales:
+                    continue
 
             if fmt_pos - 1 == self.pos.C and category != "y":
                 continue
