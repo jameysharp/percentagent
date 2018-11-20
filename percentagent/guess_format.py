@@ -141,7 +141,24 @@ class DateParser(object):
 
         required_formats = _State._min_date_formats + _State._min_time_formats
         groups = sorted(
-            ((category, group) for category, group in zip(groups._fields, groups) if group),
+            (
+                (
+                    category,
+                    group,
+                    tuple(
+                        (f, required)
+                        for f, required in _position_constraints
+                        if category in required
+                    ),
+                    tuple(
+                        (f, required)
+                        for f, required, revisit in _value_constraints
+                        if category in required or category in revisit
+                    ),
+                )
+                for category, group in zip(groups._fields, groups)
+                if group
+            ),
             key=lambda i: (i[0] not in required_formats, len(i[1]))
         )
 
@@ -180,10 +197,10 @@ class DateParser(object):
                 heuristic = len(state.pending_hints) + sum(
                     next((
                         self._optimistic_score(assignment)
-                        for assignment in group
+                        for assignment in group[1]
                         if assignment.pos not in assigned
                     ), 0)
-                    for category, group in state.remaining_groups
+                    for group in state.remaining_groups
                 )
 
                 if quality + heuristic < best_quality:
@@ -325,7 +342,7 @@ class _State(namedtuple("_State", (
     __slots__ = ()
 
     def children(self):
-        category, options = self.remaining_groups[0]
+        category, options, position_constraints, value_constraints = self.remaining_groups[0]
         remaining_groups = self.remaining_groups[1:]
 
         date_present = self.date_present
@@ -337,8 +354,7 @@ class _State(namedtuple("_State", (
 
         position_constraints = [
             f
-            for f, required in _position_constraints
-            if category in required
+            for f, required in position_constraints
             if all(
                 (c == category) == (getattr(self.pos, c) is None)
                 for c in required
@@ -347,8 +363,7 @@ class _State(namedtuple("_State", (
 
         value_constraints = [
             f
-            for f, required, revisit in _value_constraints
-            if category in required or category in revisit
+            for f, required in value_constraints
             if all(
                 (c == category) == (getattr(self.pos, c) is None)
                 for c in required
