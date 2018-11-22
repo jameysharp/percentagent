@@ -95,17 +95,20 @@ class DateParser(object):
         case = list(map(str.casefold, raw))
         prefixes = [{}] + [dict(self.locale_set.prefixes.get(match, ())) for match in case[:-1]]
         suffixes = [dict(self.locale_set.suffixes.get(match, ())) for match in case[1:]] + [{}]
-        keywords = map(self._lookup_keyword, raw)
 
         groups = _DateTime(**{ field: [] for field in _DateTime._fields })
         choices_per_position = {}
         always_literal = set()
-        for idx, (keyword, prefix, suffix) in enumerate(zip(keywords, prefixes, suffixes)):
+        numeric = set()
+        for idx, (prefix, suffix) in enumerate(zip(prefixes, suffixes)):
+            keyword = self._lookup_keyword(raw[idx])
             if "y" in prefix:
                 prefix["C"] = tuple(set(prefix["y"] + prefix.get("C", ())))
             if not keyword:
                 always_literal.add(idx)
             else:
+                if raw[idx].isdigit():
+                    numeric.add(idx)
                 choices_per_position[idx] = len(keyword)
                 for fmt, value, locales in keyword:
                     category = fmt[-1]
@@ -122,6 +125,7 @@ class DateParser(object):
                         prefix=prefix.get(fmt[-1]),
                         suffix=suffix.get(fmt[-1]),
                     ))
+        numeric = frozenset(numeric)
 
         # If a required date field is unsatisfiable, this is not a date.
         if not all(getattr(groups, category) for category in _State._min_date_formats):
@@ -190,7 +194,7 @@ class DateParser(object):
             _State.empty._replace(
                 unconverted=frozenset(always_literal),
                 remaining_groups=tuple(groups),
-            ).children()
+            ).children(numeric=numeric)
         ]
         while partials:
             try:
@@ -225,7 +229,7 @@ class DateParser(object):
                     # possible score, this state is still not good enough.
                     continue
 
-                partials.append(state.children())
+                partials.append(state.children(numeric=numeric))
                 continue
 
             value = state.valid()
@@ -358,7 +362,7 @@ class _State(namedtuple("_State", (
     ))):
     __slots__ = ()
 
-    def children(self):
+    def children(self, numeric):
         category, options, position_constraints, value_constraints = self.remaining_groups[0]
         remaining_groups = self.remaining_groups[1:]
 
@@ -407,6 +411,8 @@ class _State(namedtuple("_State", (
                 if None in exclude:
                     continue
                 exclude = frozenset(itertools.chain.from_iterable(exclude))
+                if not exclude.isdisjoint(numeric):
+                    continue
                 if not exclude.isdisjoint(pos):
                     continue
             else:
