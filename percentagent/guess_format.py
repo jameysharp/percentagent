@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from collections import Counter, namedtuple
+from collections import Counter, OrderedDict, namedtuple
 import datetime
 import itertools
 import re
@@ -140,31 +140,48 @@ class DateParser(object):
             ))
 
         required_formats = _State._min_date_formats + _State._min_time_formats
-        groups = sorted(
+        groups = OrderedDict(sorted(
             (
                 (
                     category,
-                    group,
-                    tuple(
-                        (f, required)
-                        for f, required in _position_constraints
-                        if category in required
-                    ),
-                    tuple(
-                        (f, required)
-                        for f, required, revisit in _value_constraints
-                        if category in required or category in revisit
-                    ),
+                    (
+                        group,
+                        tuple(
+                            (f, required)
+                            for f, required in _position_constraints
+                            if category in required
+                        ),
+                        tuple(
+                            (f, required)
+                            for f, required, revisit in _value_constraints
+                            if category in required or category in revisit
+                        ),
+                    )
                 )
                 for category, group in zip(groups._fields, groups)
                 if group
             ),
-            key=lambda i: (i[0] not in required_formats, len(i[1]))
-        )
+            key=lambda i: (i[0] not in required_formats, len(i[1][0]))
+        ))
 
         # We've already filtered out all possibilities; there's nothing here.
         if not groups:
             return []
+
+        constrained_groups = []
+        while groups:
+            category, (group, position, value) = groups.popitem(last=False)
+            constrained_groups.append((category, group, position, value))
+            required = frozenset(itertools.chain.from_iterable(required for f, required in itertools.chain(position, value)))
+            if required:
+                required = [
+                    category
+                    for category in reversed(groups.keys())
+                    if category in required
+                ]
+                for category in required:
+                    groups.move_to_end(category, last=False)
+        groups = constrained_groups
 
         best_quality = 0
         best_candidates = []
